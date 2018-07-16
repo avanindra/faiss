@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #include "IVFPQ.cuh"
 #include "../GpuResources.h"
@@ -39,11 +37,13 @@ IVFPQ::IVFPQ(GpuResources* resources,
              int bitsPerSubQuantizer,
              float* pqCentroidData,
              IndicesOptions indicesOptions,
-             bool useFloat16LookupTables) :
+             bool useFloat16LookupTables,
+             MemorySpace space) :
     IVFBase(resources,
             quantizer,
             numSubQuantizers,
-            indicesOptions),
+            indicesOptions, 
+            space),
     numSubQuantizers_(numSubQuantizers),
     bitsPerSubQuantizer_(bitsPerSubQuantizer),
     numSubQuantizerCodes_(utils::pow2(bitsPerSubQuantizer_)),
@@ -117,7 +117,7 @@ IVFPQ::setPrecomputedCodes(bool enable) {
 
 int
 IVFPQ::classifyAndAddVectors(Tensor<float, 2, true>& vecs,
-                             Tensor<long, 1, true>& indices) {
+                             Tensor< int64_t, 1, true>& indices) {
   FAISS_ASSERT(vecs.getSize(0) == indices.getSize(0));
   FAISS_ASSERT(vecs.getSize(1) == dim_);
 
@@ -194,10 +194,7 @@ IVFPQ::classifyAndAddVectors(Tensor<float, 2, true>& vecs,
                   closestSubQDistanceView,
                   closestSubQIndexView,
                   // We don't care about distances
-                  true,
-                  // Much larger tile size, since these vectors are a
-                  // lot smaller than query vectors
-                  1024);
+                  true);
   }
 
   // Now, we have the nearest sub-q centroid for each slice of the
@@ -269,7 +266,7 @@ IVFPQ::classifyAndAddVectors(Tensor<float, 2, true>& vecs,
       if ((indicesOptions_ == INDICES_32_BIT) ||
           (indicesOptions_ == INDICES_64_BIT)) {
         size_t indexSize =
-          (indicesOptions_ == INDICES_32_BIT) ? sizeof(int) : sizeof(long);
+          (indicesOptions_ == INDICES_32_BIT) ? sizeof(int) : sizeof( int64_t);
 
         indices->resize(indices->size() + counts.second * indexSize, stream);
       } else if (indicesOptions_ == INDICES_CPU) {
@@ -305,7 +302,7 @@ IVFPQ::classifyAndAddVectors(Tensor<float, 2, true>& vecs,
   // map. We already resized our map above.
   if (indicesOptions_ == INDICES_CPU) {
     // We need to maintain the indices on the CPU side
-    HostTensor<long, 1, true> hostIndices(indices, stream);
+    HostTensor< int64_t, 1, true> hostIndices(indices, stream);
 
     for (int i = 0; i < hostIndices.getSize(0); ++i) {
       int listId = listIdsHost[i];
@@ -347,7 +344,7 @@ IVFPQ::classifyAndAddVectors(Tensor<float, 2, true>& vecs,
 void
 IVFPQ::addCodeVectorsFromCpu(int listId,
                              const void* codes,
-                             const long* indices,
+                             const  int64_t* indices,
                              size_t numVecs) {
   // This list must already exist
   FAISS_ASSERT(listId < deviceListData_.size());
@@ -496,7 +493,7 @@ IVFPQ::precomputeCodes_() {
 
   // Sum || y_R ||^2 + 2 * (y_C|y_R)
   // i.e., add norms                              (sub q * code id)
-  // along columns of inner product  (centroid id)(sub q * code id)
+  // a int64_t columns of inner product  (centroid id)(sub q * code id)
   runSumAlongColumns(subQuantizerNorms, coarsePQProductTransposedView,
                      resources_->getDefaultStreamCurrentDevice());
 
@@ -519,7 +516,7 @@ IVFPQ::query(Tensor<float, 2, true>& queries,
              int nprobe,
              int k,
              Tensor<float, 2, true>& outDistances,
-             Tensor<long, 2, true>& outIndices) {
+             Tensor< int64_t, 2, true>& outIndices) {
   // Validate these at a top level
   FAISS_ASSERT(nprobe <= 1024);
   FAISS_ASSERT(k <= 1024);
@@ -567,7 +564,7 @@ IVFPQ::query(Tensor<float, 2, true>& queries,
   // FIXME: we might ultimately be calling this function with inputs
   // from the CPU, these are unnecessary copies
   if (indicesOptions_ == INDICES_CPU) {
-    HostTensor<long, 2, true> hostOutIndices(outIndices, stream);
+    HostTensor< int64_t, 2, true> hostOutIndices(outIndices, stream);
 
     ivfOffsetToUserIndex(hostOutIndices.data(),
                          numLists_,
@@ -601,7 +598,7 @@ IVFPQ::runPQPrecomputedCodes_(
   DeviceTensor<int, 2, true>& coarseIndices,
   int k,
   Tensor<float, 2, true>& outDistances,
-  Tensor<long, 2, true>& outIndices) {
+  Tensor< int64_t, 2, true>& outIndices) {
   auto& mem = resources_->getMemoryManagerCurrentDevice();
   auto stream = resources_->getDefaultStreamCurrentDevice();
 
@@ -684,7 +681,7 @@ IVFPQ::runPQNoPrecomputedCodes_(
   DeviceTensor<int, 2, true>& coarseIndices,
   int k,
   Tensor<float, 2, true>& outDistances,
-  Tensor<long, 2, true>& outIndices) {
+  Tensor< int64_t, 2, true>& outIndices) {
   FAISS_ASSERT(!quantizer_->getUseFloat16());
   auto& coarseCentroids = quantizer_->getVectorsFloat32Ref();
 

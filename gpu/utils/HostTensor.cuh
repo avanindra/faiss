@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #pragma once
 
@@ -17,10 +15,10 @@ namespace faiss { namespace gpu {
 
 template <typename T,
           int Dim,
-          bool Contig = false,
+          bool InnerContig = false,
           typename IndexT = int,
           template <typename U> class PtrTraits = traits::DefaultPtrTraits>
-class HostTensor : public Tensor<T, Dim, Contig, IndexT, PtrTraits> {
+class HostTensor : public Tensor<T, Dim, InnerContig, IndexT, PtrTraits> {
  public:
   typedef IndexT IndexType;
   typedef typename PtrTraits<T>::PtrType DataPtrType;
@@ -33,13 +31,22 @@ class HostTensor : public Tensor<T, Dim, Contig, IndexT, PtrTraits> {
 
   /// Constructs a tensor of the given size, allocating memory for it
   /// locally
-  __host__ HostTensor(const IndexT sizes[Dim]);
+  __host__ HostTensor(const IndexT sizes[Dim]) :
+	  Tensor<T, Dim, InnerContig, IndexT, PtrTraits>(nullptr, sizes),
+	  state_(AllocState::Owner) {
+
+	  this->data_ = new T[this->numElements()];
+	  FAISS_ASSERT(this->data_ != nullptr);
+  }
   __host__ HostTensor(std::initializer_list<IndexT> sizes);
 
   /// Constructs a tensor of the given size and stride, referencing a
   /// memory region we do not own
   __host__ HostTensor(DataPtrType data,
-                      const IndexT sizes[Dim]);
+                      const IndexT sizes[Dim]) :
+	  Tensor<T, Dim, InnerContig, IndexT, PtrTraits>(data, sizes),
+	  state_(AllocState::NotOwner) {
+  }
   __host__ HostTensor(DataPtrType data,
                       std::initializer_list<IndexT> sizes);
 
@@ -47,24 +54,27 @@ class HostTensor : public Tensor<T, Dim, Contig, IndexT, PtrTraits> {
   /// memory region we do not own
   __host__ HostTensor(DataPtrType data,
                       const IndexT sizes[Dim],
-                      const IndexT strides[Dim]);
+                      const IndexT strides[Dim]) :
+	  Tensor<T, Dim, InnerContig, IndexT, PtrTraits>(data, sizes, strides),
+	  state_(AllocState::NotOwner) {
+  }
 
   /// Copies a tensor into ourselves, allocating memory for it
   /// locally. If the tensor is on the GPU, then we will copy it to
   /// ourselves wrt the given stream.
-  __host__ HostTensor(Tensor<T, Dim, Contig, IndexT, PtrTraits>& t,
+  __host__ HostTensor(Tensor<T, Dim, InnerContig, IndexT, PtrTraits>& t,
                       cudaStream_t stream);
 
   /// Call to zero out memory
-  __host__ HostTensor<T, Dim, Contig, IndexT, PtrTraits>& zero();
+  __host__ HostTensor<T, Dim, InnerContig, IndexT, PtrTraits>& zero();
 
   /// Returns the maximum difference seen between two tensors
   __host__ T
-  maxDiff(const HostTensor<T, Dim, Contig, IndexT, PtrTraits>& t) const;
+  maxDiff(const HostTensor<T, Dim, InnerContig, IndexT, PtrTraits>& t) const;
 
   /// Are the two tensors exactly equal?
   __host__ bool
-  equal(const HostTensor<T, Dim, Contig, IndexT, PtrTraits>& t) const {
+  equal(const HostTensor<T, Dim, InnerContig, IndexT, PtrTraits>& t) const {
     return (maxDiff(t) == (T) 0);
   }
 

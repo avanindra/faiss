@@ -4,5 +4,7 @@ list(APPEND srcs
 foreach(source ${srcs})
     get_filename_component(name ${source} NAME_WE)
     add_executable(${name} ${source})
-    target_link_libraries(${name} ${faiss_lib_gpu} ${faiss_lib} ${CUDA_LINKER_LIBS})
+	message(STATUS "cuda linker libs : ${CUDA_LINKER_LIBS}")
+    target_link_libraries(${name} ${faiss_lib_gpu} ${faiss_lib} ${CUDA_LINKER_LIBS}  ${OpenCV_LIBS} pthread_dll
+	${CUDA_cublas_LIBRARY} ${CUDA_cublas_device_LIBRARY} ${OpenBLAS_LIB})
 endforeach(source)

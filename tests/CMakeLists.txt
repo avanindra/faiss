@@ -15,5 +15,5 @@ foreach(source ${srcs})
     target_link_libraries(${name} ${faiss_lib} ${BLAS_LIB} ${GTEST_BOTH_LIBRARIES})
 
     # Install
-    install(TARGETS ${name} DESTINATION test)
+   # install(TARGETS ${name} DESTINATION test)
 endforeach(source)

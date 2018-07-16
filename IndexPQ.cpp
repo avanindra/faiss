@@ -1,15 +1,12 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-/* Copyright 2004-present Facebook. All Rights Reserved.
-   Index based on product quantiztion.
-*/
+// -*- c++ -*-
 
 #include "IndexPQ.h"
 
@@ -17,10 +14,12 @@
 #include <cstddef>
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 
 #include <algorithm>
 
 #include "FaissAssert.h"
+#include "AuxIndexStructures.h"
 #include "hamming.h"
 
 namespace faiss {
@@ -35,7 +34,6 @@ IndexPQ::IndexPQ (int d, size_t M, size_t nbits, MetricType metric):
 {
     is_trained = false;
     do_polysemous_training = false;
-    set_typename();
     polysemous_ht = nbits * M + 1;
     search_type = ST_PQ;
     encode_signs = false;
@@ -46,18 +44,9 @@ IndexPQ::IndexPQ ()
     metric_type = METRIC_L2;
     is_trained = false;
     do_polysemous_training = false;
-    set_typename();
     polysemous_ht = pq.nbits * pq.M + 1;
     search_type = ST_PQ;
     encode_signs = false;
-}
-
-
-void IndexPQ::set_typename ()
-{
-    std::stringstream s;
-    s << "PQ_" << pq.M << "x" << pq.nbits;
-    index_typename = s.str();
 }
 
 
@@ -87,12 +76,33 @@ void IndexPQ::train (idx_t n, const float *x)
 
 void IndexPQ::add (idx_t n, const float *x)
 {
-    FAISS_ASSERT (is_trained);
+    FAISS_THROW_IF_NOT (is_trained);
     codes.resize ((n + ntotal) * pq.code_size);
     pq.compute_codes (x, &codes[ntotal * pq.code_size], n);
     ntotal += n;
 }
 
+
+int64_t IndexPQ::remove_ids (const IDSelector & sel)
+{
+    idx_t j = 0;
+    for (idx_t i = 0; i < ntotal; i++) {
+        if (sel.is_member (i)) {
+            // should be removed
+        } else {
+            if (i > j) {
+                memmove (&codes[pq.code_size * j], &codes[pq.code_size * i], pq.code_size);
+            }
+            j++;
+        }
+    }
+    int64_t nremove = ntotal - j;
+    if (nremove > 0) {
+        ntotal = j;
+        codes.resize (ntotal * pq.code_size);
+    }
+    return nremove;
+}
 
 
 void IndexPQ::reset()
@@ -103,7 +113,7 @@ void IndexPQ::reset()
 
 void IndexPQ::reconstruct_n (idx_t i0, idx_t ni, float *recons) const
 {
-    FAISS_ASSERT (ni == 0 || (i0 >= 0 && i0 + ni <= ntotal));
+    FAISS_THROW_IF_NOT (ni == 0 || (i0 >= 0 && i0 + ni <= ntotal));
     for (idx_t i = 0; i < ni; i++) {
         const uint8_t * code = &codes[(i0 + i) * pq.code_size];
         pq.decode (code, recons + i * d);
@@ -113,7 +123,7 @@ void IndexPQ::reconstruct_n (idx_t i0, idx_t ni, float *recons) const
 
 void IndexPQ::reconstruct (idx_t key, float * recons) const
 {
-    FAISS_ASSERT (key >= 0 && key < ntotal);
+    FAISS_THROW_IF_NOT (key >= 0 && key < ntotal);
     pq.decode (&codes[key * pq.code_size], recons);
 }
 
@@ -134,7 +144,7 @@ void IndexPQ::reconstruct (idx_t key, float * recons) const
 void IndexPQ::search (idx_t n, const float *x, idx_t k,
                            float *distances, idx_t *labels) const
 {
-    FAISS_ASSERT (is_trained);
+    FAISS_THROW_IF_NOT (is_trained);
     if (search_type == ST_PQ) {  // Simple PQ search
 
         if (metric_type == METRIC_L2) {
@@ -152,22 +162,20 @@ void IndexPQ::search (idx_t n, const float *x, idx_t k,
     } else if (search_type == ST_polysemous ||
                search_type == ST_polysemous_generalize) {
 
-        FAISS_ASSERT (metric_type == METRIC_L2);
+        FAISS_THROW_IF_NOT (metric_type == METRIC_L2);
 
         search_core_polysemous (n, x, k, distances, labels);
 
     } else { // code-to-code distances
 
         uint8_t * q_codes = new uint8_t [n * pq.code_size];
+        ScopeDeleter<uint8_t> del (q_codes);
+
 
         if (!encode_signs) {
-
             pq.compute_codes (x, q_codes, n);
-
-
-
         } else {
-            FAISS_ASSERT (d == pq.nbits * pq.M);
+            FAISS_THROW_IF_NOT (d == pq.nbits * pq.M);
             memset (q_codes, 0, n * pq.code_size);
             for (size_t i = 0; i < n; i++) {
                 const float *xi = x + i * d;
@@ -186,28 +194,29 @@ void IndexPQ::search (idx_t n, const float *x, idx_t k,
 
         } else {
             int * idistances = new int [n * k];
+            ScopeDeleter<int> del (idistances);
 
             int_maxheap_array_t res = {
                 size_t (n), size_t (k), labels, idistances};
 
             if (search_type == ST_HE) {
 
-                hammings_knn (&res, q_codes, codes.data(),
-                              ntotal, pq.code_size, true);
+                hammings_knn_hc (&res, q_codes, codes.data(),
+                                 ntotal, pq.code_size, true);
 
             } else if (search_type == ST_generalized_HE) {
 
-                generalized_hammings_knn (&res, q_codes, codes.data(),
-                                          ntotal, pq.code_size, true);
+                generalized_hammings_knn_hc (&res, q_codes, codes.data(),
+                                             ntotal, pq.code_size, true);
             }
 
             // convert distances to floats
             for (int i = 0; i < k * n; i++)
                 distances[i] = idistances[i];
-            delete [] idistances;
+
         }
 
-        delete [] q_codes;
+
         indexPQ_stats.nq += n;
         indexPQ_stats.ncode += n * ntotal;
     }
@@ -229,7 +238,7 @@ template <class HammingComputer>
 static size_t polysemous_inner_loop (
         const IndexPQ & index,
         const float *dis_table_qi, const uint8_t *q_code,
-        size_t k, float *heap_dis, long *heap_ids)
+        size_t k, float *heap_dis, int64_t *heap_ids)
 {
 
     int M = index.pq.M;
@@ -244,7 +253,7 @@ static size_t polysemous_inner_loop (
 
     HammingComputer hc (q_code, code_size);
 
-    for (long bi = 0; bi < ntotal; bi++) {
+    for (int64_t bi = 0; bi < ntotal; bi++) {
         int hd = hc.hamming (b_code);
 
         if (hd < ht) {
@@ -271,15 +280,16 @@ static size_t polysemous_inner_loop (
 void IndexPQ::search_core_polysemous (idx_t n, const float *x, idx_t k,
                                           float *distances, idx_t *labels) const
 {
-    FAISS_ASSERT (pq.code_size % 8 == 0);
-    FAISS_ASSERT (pq.byte_per_idx == 1);
+    FAISS_THROW_IF_NOT (pq.byte_per_idx == 1);
 
     // PQ distance tables
     float * dis_tables = new float [n * pq.ksub * pq.M];
+    ScopeDeleter<float> del (dis_tables);
     pq.compute_distance_tables (n, x, dis_tables);
 
     // Hamming embedding queries
     uint8_t * q_codes = new uint8_t [n * pq.code_size];
+    ScopeDeleter<uint8_t> del2 (q_codes);
 
     if (false) {
         pq.compute_codes (x, q_codes, n);
@@ -300,7 +310,7 @@ void IndexPQ::search_core_polysemous (idx_t n, const float *x, idx_t k,
 
         const float * dis_table_qi = dis_tables + qi * pq.M * pq.ksub;
 
-        long * heap_ids = labels + qi * k;
+        int64_t * heap_ids = labels + qi * k;
         float *heap_dis = distances + qi * k;
         maxheap_heapify (k, heap_dis, heap_ids);
 
@@ -328,12 +338,17 @@ void IndexPQ::search_core_polysemous (idx_t n, const float *x, idx_t k,
                     (*this, dis_table_qi, q_code, k, heap_dis, heap_ids);
                 break;
             default:
-                if (pq.code_size % 8 == 0)
+                if (pq.code_size % 8 == 0) {
                     n_pass += polysemous_inner_loop<HammingComputerM8>
                         (*this, dis_table_qi, q_code, k, heap_dis, heap_ids);
-                else
+                } else if (pq.code_size % 4 == 0) {
                     n_pass += polysemous_inner_loop<HammingComputerM4>
                         (*this, dis_table_qi, q_code, k, heap_dis, heap_ids);
+                } else {
+                    FAISS_THROW_FMT(
+                         "code size %zd not supported for polysemous",
+                         pq.code_size);
+                }
                 break;
             }
         } else {
@@ -351,8 +366,14 @@ void IndexPQ::search_core_polysemous (idx_t n, const float *x, idx_t k,
                     (*this, dis_table_qi, q_code, k, heap_dis, heap_ids);
                 break;
             default:
-                n_pass += polysemous_inner_loop<GenHammingComputerM8>
-                    (*this, dis_table_qi, q_code, k, heap_dis, heap_ids);
+                if (pq.code_size % 8 == 0) {
+                    n_pass += polysemous_inner_loop<GenHammingComputerM8>
+                        (*this, dis_table_qi, q_code, k, heap_dis, heap_ids);
+                } else {
+                    FAISS_THROW_FMT(
+                         "code size %zd not supported for polysemous",
+                         pq.code_size);
+                }
                 break;
             }
         }
@@ -363,8 +384,6 @@ void IndexPQ::search_core_polysemous (idx_t n, const float *x, idx_t k,
     indexPQ_stats.ncode += n * ntotal;
     indexPQ_stats.n_hamming_pass += n_pass;
 
-    delete [] q_codes;
-    delete [] dis_tables;
 
 }
 
@@ -382,31 +401,33 @@ void IndexPQ::hamming_distance_table (idx_t n, const float *x,
                                       int32_t *dis) const
 {
     uint8_t * q_codes = new uint8_t [n * pq.code_size];
+    ScopeDeleter<uint8_t> del (q_codes);
 
     pq.compute_codes (x, q_codes, n);
 
     hammings (q_codes, codes.data(), n, ntotal, pq.code_size, dis);
-
-    delete [] q_codes;
 }
 
 
 void IndexPQ::hamming_distance_histogram (idx_t n, const float *x,
                                           idx_t nb, const float *xb,
-                                          long *hist)
+                                          int64_t *hist)
 {
-    FAISS_ASSERT (metric_type == METRIC_L2);
-    FAISS_ASSERT (pq.code_size % 8 == 0);
-    FAISS_ASSERT (pq.byte_per_idx == 1);
+    FAISS_THROW_IF_NOT (metric_type == METRIC_L2);
+    FAISS_THROW_IF_NOT (pq.code_size % 8 == 0);
+    FAISS_THROW_IF_NOT (pq.byte_per_idx == 1);
 
     // Hamming embedding queries
     uint8_t * q_codes = new uint8_t [n * pq.code_size];
+    ScopeDeleter <uint8_t> del (q_codes);
     pq.compute_codes (x, q_codes, n);
 
     uint8_t * b_codes ;
+    ScopeDeleter <uint8_t> del_b_codes;
 
     if (xb) {
         b_codes = new uint8_t [nb * pq.code_size];
+        del_b_codes.set (b_codes);
         pq.compute_codes (xb, b_codes, nb);
     } else {
         nb = ntotal;
@@ -418,8 +439,9 @@ void IndexPQ::hamming_distance_histogram (idx_t n, const float *x,
 
 #pragma omp parallel
     {
-        std::vector<long> histi (nbits + 1);
+        std::vector<int64_t> histi (nbits + 1);
         hamdis_t *distances = new hamdis_t [nb * bs];
+        ScopeDeleter<hamdis_t> del (distances);
 #pragma omp for
         for (size_t q0 = 0; q0 < n; q0 += bs) {
             // printf ("dis stats: %ld/%ld\n", q0, n);
@@ -438,12 +460,7 @@ void IndexPQ::hamming_distance_histogram (idx_t n, const float *x,
             for (int i = 0; i <= nbits; i++)
                 hist[i] += histi[i];
         }
-        delete [] distances;
     }
-
-    delete [] q_codes;
-    if (xb)
-        delete [] b_codes;
 
 }
 
@@ -470,7 +487,35 @@ void IndexPQ::hamming_distance_histogram (idx_t n, const float *x,
  * MultiIndexQuantizer
  ******************************************/
 
+namespace {
 
+template <typename T>
+struct PreSortedArray {
+
+    const T * x;
+    int N;
+
+    explicit PreSortedArray (int N): N(N) {
+    }
+    void init (const T*x) {
+        this->x = x;
+    }
+    // get smallest value
+    T get_0 () {
+        return x[0];
+    }
+
+    // get delta between n-smallest and n-1 -smallest
+    T get_diff (int n) {
+        return x[n] - x[n - 1];
+    }
+
+    // remap orders counted from smallest to indices in array
+    int get_ord (int n) {
+        return n;
+    }
+
+};
 
 template <typename T>
 struct ArgSort {
@@ -650,19 +695,19 @@ template <typename T, class SSA, bool use_seen>
 struct MinSumK {
     int K;  ///< nb of sums to return
     int M;  ///< nb of elements to sum up
+    int nbit; ///< nb of bits to encode one entry
     int N;  ///< nb of possible elements for each of the M terms
 
     /** the heap.
      * We use a heap to maintain a queue of sums, with the associated
      * terms involved in the sum.
      */
-    typedef CMin<T, long> HC;
+    typedef CMin<T, int64_t> HC;
     size_t heap_capacity, heap_size;
     T *bh_val;
-    long *bh_ids;
+    int64_t *bh_ids;
 
     std::vector <SSA> ssx;
-    std::vector <long> weights;
 
     // all results get pushed several times. When there are ties, they
     // are popped interleaved with others, so it is not easy to
@@ -670,18 +715,17 @@ struct MinSumK {
     // that were seen before.
     std::vector <uint8_t> seen;
 
-    MinSumK (int K, int M, int N): K(K), M(M), N(N) {
+    MinSumK (int K, int M, int nbit, int N):
+        K(K), M(M), nbit(nbit), N(N) {
         heap_capacity = K * M;
+        assert (N <= (1 << nbit));
+
         // we'll do k steps, each step pushes at most M vals
         bh_val = new T[heap_capacity];
-        bh_ids = new long[heap_capacity];
-
-        weights.push_back (1);
-        for (int m = 1; m < M; m++)
-            weights.push_back(weights[m - 1] * N);
+        bh_ids = new int64_t[heap_capacity];
 
         if (use_seen) {
-            long n_ids = weights.back() * N;
+            int64_t n_ids = weight(M);
             seen.resize ((n_ids + 7) / 8);
         }
 
@@ -690,20 +734,27 @@ struct MinSumK {
 
     }
 
-    bool is_seen (long i) {
+    int64_t weight (int i) {
+        return 1 << (i * nbit);
+    }
+
+    bool is_seen (int64_t i) {
         return (seen[i >> 3] >> (i & 7)) & 1;
     }
 
-    void mark_seen (long i) {
+    void mark_seen (int64_t i) {
         if (use_seen)
             seen [i >> 3] |= 1 << (i & 7);
     }
 
-    void run (const T *x, T * sums, long * terms) {
+    void run (const T *x, int64_t ldx,
+              T * sums, int64_t * terms) {
         heap_size = 0;
 
-        for (int m = 0; m < M; m++)
-            ssx[m].init(x + N * m);
+        for (int m = 0; m < M; m++) {
+            ssx[m].init(x);
+            x += ldx;
+        }
 
         { // intial result: take min for all elements
             T sum = 0;
@@ -715,8 +766,8 @@ struct MinSumK {
             sums[0] = sum;
             for (int m = 0; m < M; m++) {
                 heap_push<HC> (++heap_size, bh_val, bh_ids,
-                                      sum + ssx[m].get_diff(1),
-                                      weights[m]);
+                               sum + ssx[m].get_diff(1),
+                               weight(m));
             }
         }
 
@@ -731,7 +782,7 @@ struct MinSumK {
             assert (heap_size > 0);
 
             T sum = sums[k] = bh_val[0];
-            long ti = terms[k] = bh_ids[0];
+            int64_t ti = terms[k] = bh_ids[0];
 
             if (use_seen) {
                 mark_seen (ti);
@@ -743,10 +794,10 @@ struct MinSumK {
             }
 
             // enqueue followers
-            long ii = ti;
+            int64_t ii = ti;
             for (int m = 0; m < M; m++) {
-                long n = ii % N;
-                ii /= N;
+                int64_t n = ii & ((1 << nbit) - 1);
+                ii >>= nbit;
                 if (n + 1 >= N) continue;
 
                 enqueue_follower (ti, m, n, sum);
@@ -761,28 +812,27 @@ struct MinSumK {
 
         // convert indices by applying permutation
         for (int k = 0; k < K; k++) {
-            long ii = terms[k];
+            int64_t ii = terms[k];
             if (use_seen) {
                 // clear seen for reuse at next loop
                 seen[ii >> 3] = 0;
             }
-            long ti = 0;
+            int64_t ti = 0;
             for (int m = 0; m < M; m++) {
-                long n = ii % N;
-                ti += weights[m] * ssx[m].get_ord(n);
-                ii /= N;
+                int64_t n = ii & ((1 << nbit) - 1);
+                ti += ssx[m].get_ord(n) << (nbit * m);
+                ii >>= nbit;
             }
             terms[k] = ti;
         }
     }
 
 
-    void enqueue_follower (long ti, int m, int n, T sum) {
+    void enqueue_follower (int64_t ti, int m, int n, T sum) {
         T next_sum = sum + ssx[m].get_diff(n + 1);
-        long next_ti   = ti + weights[m];
+        int64_t next_ti = ti + weight(m);
         heap_push<HC> (++heap_size, bh_val, bh_ids, next_sum, next_ti);
     }
-
 
     ~MinSumK () {
         delete [] bh_ids;
@@ -790,7 +840,7 @@ struct MinSumK {
     }
 };
 
-
+} // anonymous namespace
 
 
 MultiIndexQuantizer::MultiIndexQuantizer (int d,
@@ -799,20 +849,14 @@ MultiIndexQuantizer::MultiIndexQuantizer (int d,
     Index(d, METRIC_L2), pq(d, M, nbits)
 {
     is_trained = false;
-    set_typename();
+    pq.verbose = verbose;
 }
 
-
-void MultiIndexQuantizer::set_typename()
-{
-    std::stringstream s;
-    s << "MI_" << pq.M << "x" << pq.nbits;
-    index_typename = s.str();
-}
 
 
 void MultiIndexQuantizer::train(idx_t n, const float *x)
 {
+    pq.verbose = verbose;
     pq.train (n, x);
     is_trained = true;
     // count virtual elements in index
@@ -823,64 +867,227 @@ void MultiIndexQuantizer::train(idx_t n, const float *x)
 
 
 void MultiIndexQuantizer::search (idx_t n, const float *x, idx_t k,
-                                       float *distances, idx_t *labels) const {
+                                  float *distances, idx_t *labels) const {
+    if (n == 0) return;
 
     float * dis_tables = new float [n * pq.ksub * pq.M];
+    ScopeDeleter<float> del (dis_tables);
 
     pq.compute_distance_tables (n, x, dis_tables);
 
-    /// TODO: special version for k==1
+    if (k == 1) {
+        // simple version that just finds the min in each table
 
-#pragma omp parallel
-    {
-        MinSumK <float, SemiSortedArray<float>, false> msk(k, pq.M, pq.ksub);
-#pragma omp for
+#pragma omp parallel for
         for (int i = 0; i < n; i++) {
-            msk.run (dis_tables + i * pq.ksub * pq.M,
-                     distances + i * k, labels + i * k);
+            const float * dis_table = dis_tables + i * pq.ksub * pq.M;
+            float dis = 0;
+            idx_t label = 0;
 
+            for (int s = 0; s < pq.M; s++) {
+                float vmin = HUGE_VALF;
+                idx_t lmin = -1;
+
+                for (idx_t j = 0; j < pq.ksub; j++) {
+                    if (dis_table[j] < vmin) {
+                        vmin = dis_table[j];
+                        lmin = j;
+                    }
+                }
+                dis += vmin;
+                label |= lmin << (s * pq.nbits);
+                dis_table += pq.ksub;
+            }
+
+            distances [i] = dis;
+            labels [i] = label;
+        }
+
+
+    } else {
+
+#pragma omp parallel if(n > 1)
+        {
+            MinSumK <float, SemiSortedArray<float>, false>
+                msk(k, pq.M, pq.nbits, pq.ksub);
+#pragma omp for
+            for (int i = 0; i < n; i++) {
+                msk.run (dis_tables + i * pq.ksub * pq.M, pq.ksub,
+                         distances + i * k, labels + i * k);
+
+            }
         }
     }
-    delete [] dis_tables;
+
 }
 
 
 void MultiIndexQuantizer::reconstruct (idx_t key, float * recons) const
 {
-    if (pq.byte_per_idx == 1) {
-        uint8_t code[pq.M];
-        long jj = key;
-        for (int m = 0; m < pq.M; m++) {
-            long n = jj % pq.ksub;
-            jj /= pq.ksub;
-            code[m] = n;
-        }
-        pq.decode (code, recons);
-    } else if (pq.byte_per_idx == 2) {
-        uint16_t code[pq.M];
-        long jj = key;
-        for (int m = 0; m < pq.M; m++) {
-            long n = jj % pq.ksub;
-            jj /= pq.ksub;
-            code[m] = n;
-        }
-        pq.decode ((uint8_t*)code, recons);
-    } else FAISS_ASSERT(!"only 1 or 2 bytes per index supported");
+
+    int64_t jj = key;
+    for (int m = 0; m < pq.M; m++) {
+        int64_t n = jj & ((1L << pq.nbits) - 1);
+        jj >>= pq.nbits;
+        memcpy(recons, pq.get_centroids(m, n), sizeof(recons[0]) * pq.dsub);
+        recons += pq.dsub;
+    }
 }
 
-
-void MultiIndexQuantizer::add (idx_t n, const float *x)
-{
-    FAISS_ASSERT (!"This index has virtual elements, it does not support add");
+void MultiIndexQuantizer::add(idx_t /*n*/, const float* /*x*/) {
+  FAISS_THROW_MSG(
+      "This index has virtual elements, "
+      "it does not support add");
 }
 
 void MultiIndexQuantizer::reset ()
 {
-    FAISS_ASSERT (!"This index has virtual elements, "
-                  "it does not support reset");
+    FAISS_THROW_MSG ( "This index has virtual elements, "
+                      "it does not support reset");
 }
 
 
 
 
-} // END namespace faiss
+
+
+
+
+
+
+/*****************************************
+ * MultiIndexQuantizer2
+ ******************************************/
+
+
+
+MultiIndexQuantizer2::MultiIndexQuantizer2 (
+        int d, size_t M, size_t nbits,
+        Index **indexes):
+    MultiIndexQuantizer (d, M, nbits)
+{
+    assign_indexes.resize (M);
+    for (int i = 0; i < M; i++) {
+        FAISS_THROW_IF_NOT_MSG(
+            indexes[i]->d == pq.dsub,
+            "Provided sub-index has incorrect size");
+        assign_indexes[i] = indexes[i];
+    }
+    own_fields = false;
+}
+
+MultiIndexQuantizer2::MultiIndexQuantizer2 (
+        int d, size_t nbits,
+        Index *assign_index_0,
+        Index *assign_index_1):
+    MultiIndexQuantizer (d, 2, nbits)
+{
+    FAISS_THROW_IF_NOT_MSG(
+            assign_index_0->d == pq.dsub &&
+            assign_index_1->d == pq.dsub,
+            "Provided sub-index has incorrect size");
+    assign_indexes.resize (2);
+    assign_indexes [0] = assign_index_0;
+    assign_indexes [1] = assign_index_1;
+    own_fields = false;
+}
+
+void MultiIndexQuantizer2::train(idx_t n, const float* x)
+{
+    MultiIndexQuantizer::train(n, x);
+    // add centroids to sub-indexes
+    for (int i = 0; i < pq.M; i++) {
+        assign_indexes[i]->add(pq.ksub, pq.get_centroids(i, 0));
+    }
+}
+
+
+void MultiIndexQuantizer2::search(
+        idx_t n, const float* x, idx_t K,
+        float* distances, idx_t* labels) const
+{
+
+    if (n == 0) return;
+
+    int k2 = std::min(K, int64_t(pq.ksub));
+
+    int64_t M = pq.M;
+    int64_t dsub = pq.dsub, ksub = pq.ksub;
+
+    // size (M, n, k2)
+    std::vector<idx_t> sub_ids(n * M * k2);
+    std::vector<float> sub_dis(n * M * k2);
+    std::vector<float> xsub(n * dsub);
+
+    for (int m = 0; m < M; m++) {
+        float *xdest = xsub.data();
+        const float *xsrc = x + m * dsub;
+        for (int j = 0; j < n; j++) {
+            memcpy(xdest, xsrc, dsub * sizeof(xdest[0]));
+            xsrc += d;
+            xdest += dsub;
+        }
+
+        assign_indexes[m]->search(
+              n, xsub.data(), k2,
+              &sub_dis[k2 * n * m],
+              &sub_ids[k2 * n * m]);
+    }
+
+    if (K == 1) {
+        // simple version that just finds the min in each table
+        assert (k2 == 1);
+
+        for (int i = 0; i < n; i++) {
+            float dis = 0;
+            idx_t label = 0;
+
+            for (int m = 0; m < M; m++) {
+                float vmin = sub_dis[i + m * n];
+                idx_t lmin = sub_ids[i + m * n];
+                dis += vmin;
+                label |= lmin << (m * pq.nbits);
+            }
+            distances [i] = dis;
+            labels [i] = label;
+        }
+
+    } else {
+
+#pragma omp parallel if(n > 1)
+        {
+            MinSumK <float, PreSortedArray<float>, false>
+                msk(K, pq.M, pq.nbits, k2);
+#pragma omp for
+            for (int i = 0; i < n; i++) {
+                idx_t *li = labels + i * K;
+                msk.run (&sub_dis[i * k2], k2 * n,
+                         distances + i * K, li);
+
+                // remap ids
+
+                const idx_t *idmap0 = sub_ids.data() + i * k2;
+                int64_t ld_idmap = k2 * n;
+                int64_t mask1 = ksub - 1L;
+
+                for (int k = 0; k < K; k++) {
+                    const idx_t *idmap = idmap0;
+                    int64_t vin = li[k];
+                    int64_t vout = 0;
+                    int bs = 0;
+                    for (int m = 0; m < M; m++) {
+                        int64_t s = vin & mask1;
+                        vin >>= pq.nbits;
+                        vout |= idmap[s] << bs;
+                        bs += pq.nbits;
+                        idmap += ld_idmap;
+                    }
+                    li[k] = vout;
+                }
+            }
+        }
+    }
+}
+
+
+} // namespace faiss

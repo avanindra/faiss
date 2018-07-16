@@ -1,17 +1,16 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #include "Timer.h"
 #include "DeviceUtils.h"
 #include "../../FaissAssert.h"
+#include "opencvincludes.h"
 
 namespace faiss { namespace gpu {
 
@@ -46,18 +45,20 @@ KernelTimer::elapsedMilliseconds() {
 }
 
 CpuTimer::CpuTimer() {
-  clock_gettime(CLOCK_REALTIME, &start_);
+  //clock_gettime(CLOCK_REALTIME, &start_);
+	_start = cv::getTickCount();
 }
+
 
 float
 CpuTimer::elapsedMilliseconds() {
-  struct timespec end;
-  clock_gettime(CLOCK_REALTIME, &end);
+  //struct timespec end;
+  //clock_gettime(CLOCK_REALTIME, &end);
 
-  auto diffS = end.tv_sec - start_.tv_sec;
-  auto diffNs = end.tv_nsec - start_.tv_nsec;
+  //auto diffS = end.tv_sec - start_.tv_sec;
+  //auto diffNs = end.tv_nsec - start_.tv_nsec;
 
-  return 1000.0f * (float) diffS + ((float) diffNs) / 1000000.0f;
+  return  (cv::getTickCount() - _start) * 1000 / cv::getTickFrequency(); //1000.0f * (float) diffS + ((float) diffNs) / 1000000.0f;
 }
 
 } } // namespace

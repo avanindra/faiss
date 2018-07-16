@@ -1,27 +1,32 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #pragma once
 
 #include "../GpuIndicesOptions.h"
 #include "../utils/DeviceVector.cuh"
 #include "../utils/DeviceTensor.cuh"
+#include "../utils/MemorySpace.h"
 #include <memory>
 #include <thrust/device_vector.h>
 #include <vector>
 
+#ifdef __CUDACC__
+#define CUDA_CALLABLE_MEMBER __host__ __device__
+#else
+#define CUDA_CALLABLE_MEMBER
+#endif 
+
 namespace faiss { namespace gpu {
 
 class GpuResources;
-struct FlatIndex;
+class FlatIndex;
 
 /// Base inverted list functionality for IVFFlat and IVFPQ
 class IVFBase {
@@ -30,7 +35,8 @@ class IVFBase {
           /// We do not own this reference
           FlatIndex* quantizer,
           int bytesPerVector,
-          IndicesOptions indicesOptions);
+          IndicesOptions indicesOptions,
+          MemorySpace space);
 
   virtual ~IVFBase();
 
@@ -56,7 +62,7 @@ class IVFBase {
   int getListLength(int listId) const;
 
   /// Return the list indices of a particular list back to the CPU
-  std::vector<long> getListIndices(int listId) const;
+  std::vector< int64_t> getListIndices(int listId) const;
 
  protected:
   /// Reclaim memory consumed on the device for our inverted lists
@@ -73,7 +79,7 @@ class IVFBase {
 
   /// Shared function to copy indices from CPU to GPU
   void addIndicesFromCpu_(int listId,
-                          const long* indices,
+                          const  int64_t* indices,
                           size_t numVecs);
 
  protected:
@@ -94,6 +100,9 @@ class IVFBase {
 
   /// How are user indices stored on the GPU?
   const IndicesOptions indicesOptions_;
+
+  /// What memory space our inverted list storage is in
+  const MemorySpace space_;
 
   /// Device representation of all inverted list data
   /// id -> data
@@ -120,7 +129,7 @@ class IVFBase {
   /// If we are storing indices on the CPU (indicesOptions_ is
   /// INDICES_CPU), then this maintains a CPU-side map of what
   /// (inverted list id, offset) maps to which user index
-  std::vector<std::vector<long>> listOffsetToUserIndex_;
+  std::vector<std::vector< int64_t>> listOffsetToUserIndex_;
 };
 
 } } // namespace

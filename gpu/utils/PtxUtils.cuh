@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #pragma once
 
@@ -23,8 +21,8 @@ unsigned int getBitfield(unsigned int val, int pos, int len) {
 }
 
 __device__ __forceinline__
-unsigned long getBitfield(unsigned long val, int pos, int len) {
-  unsigned long ret;
+uint64_t getBitfield(uint64_t val, int pos, int len) {
+  uint64_t ret;
   asm("bfe.u64 %0, %1, %2, %3;" : "=l"(ret) : "l"(val), "r"(pos), "r"(len));
   return ret;
 }

@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #include "IVFFlatScan.cuh"
 #include "../GpuResources.h"
@@ -23,6 +21,7 @@
 #include "../utils/Reductions.cuh"
 #include "../utils/StaticUtils.h"
 #include <thrust/host_vector.h>
+#include <algorithm>
 
 namespace faiss { namespace gpu {
 
@@ -623,7 +622,7 @@ runIVFFlatScanTile(Tensor<float, 2, true>& queries,
                    bool l2Distance,
                    bool useFloat16,
                    Tensor<float, 2, true>& outDistances,
-                   Tensor<long, 2, true>& outIndices,
+                   Tensor<int64_t, 2, true>& outIndices,
                    cudaStream_t stream) {
   // Calculate offset lengths, so we know where to write out
   // intermediate results
@@ -707,6 +706,8 @@ runIVFFlatScanTile(Tensor<float, 2, true>& queries,
     HANDLE_DIM_CASE(-1);
   }
 
+  CUDA_TEST_ERROR();
+
 #undef HANDLE_DIM_CASE
 #undef RUN_IVF_FLAT
 
@@ -735,8 +736,6 @@ runIVFFlatScanTile(Tensor<float, 2, true>& queries,
                       outDistances,
                       outIndices,
                       stream);
-
-  CUDA_VERIFY(cudaGetLastError());
 }
 
 void
@@ -753,7 +752,7 @@ runIVFFlatScan(Tensor<float, 2, true>& queries,
                // output
                Tensor<float, 2, true>& outDistances,
                // output
-               Tensor<long, 2, true>& outIndices,
+               Tensor<int64_t, 2, true>& outIndices,
                GpuResources* res) {
   constexpr int kMinQueryTileSize = 8;
   constexpr int kMaxQueryTileSize = 128;

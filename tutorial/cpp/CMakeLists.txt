@@ -11,5 +11,5 @@ foreach(source ${srcs})
     target_link_libraries(${name} ${faiss_lib})
 
     # Install
-    install(TARGETS ${name} DESTINATION bin)
+   # install(TARGETS ${name} DESTINATION bin)
 endforeach(source)

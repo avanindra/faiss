@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved
 // -*- c++ -*-
 
 #include "MetaIndexes.h"
@@ -15,9 +13,11 @@
 #include <pthread.h>
 
 #include <cstdio>
-
+#include <stdint.h>
 #include "FaissAssert.h"
 #include "Heap.h"
+#include "AuxIndexStructures.h"
+
 
 namespace faiss {
 
@@ -29,18 +29,17 @@ IndexIDMap::IndexIDMap (Index *index):
     index (index),
     own_fields (false)
 {
-    FAISS_ASSERT (index->ntotal == 0 || !"index must be empty on input");
+    FAISS_THROW_IF_NOT_MSG (index->ntotal == 0, "index must be empty on input");
     is_trained = index->is_trained;
     metric_type = index->metric_type;
     verbose = index->verbose;
     d = index->d;
-    set_typename ();
 }
 
 void IndexIDMap::add (idx_t, const float *)
 {
-   FAISS_ASSERT (!"add does not make sense with IndexIDMap, "
-                 "use add_with_ids");
+    FAISS_THROW_MSG ("add does not make sense with IndexIDMap, "
+                      "use add_with_ids");
 }
 
 
@@ -53,11 +52,12 @@ void IndexIDMap::train (idx_t n, const float *x)
 void IndexIDMap::reset ()
 {
     index->reset ();
+    id_map.clear();
     ntotal = 0;
 }
 
 
-void IndexIDMap::add_with_ids (idx_t n, const float * x, const long *xids)
+void IndexIDMap::add_with_ids (idx_t n, const float * x, const  int64_t *xids)
 {
     index->add (n, x);
     for (idx_t i = 0; i < n; i++)
@@ -77,16 +77,103 @@ void IndexIDMap::search (idx_t n, const float *x, idx_t k,
 }
 
 
+void IndexIDMap::range_search (idx_t n, const float *x, float radius,
+                   RangeSearchResult *result) const
+{
+  index->range_search(n, x, radius, result);
+  for (idx_t i = 0; i < result->lims[result->nq]; i++) {
+      result->labels[i] = result->labels[i] < 0 ?
+        result->labels[i] : id_map[result->labels[i]];
+  }
+}
+
+namespace {
+
+struct IDTranslatedSelector: IDSelector {
+    const std::vector < int64_t> & id_map;
+    const IDSelector & sel;
+    IDTranslatedSelector (const std::vector < int64_t> & id_map,
+                          const IDSelector & sel):
+        id_map (id_map), sel (sel)
+    {}
+    bool is_member(idx_t id) const override {
+      return sel.is_member(id_map[id]);
+    }
+};
+
+}
+
+ int64_t IndexIDMap::remove_ids (const IDSelector & sel)
+{
+    // remove in sub-index first
+    IDTranslatedSelector sel2 (id_map, sel);
+     int64_t nremove = index->remove_ids (sel2);
+
+     int64_t j = 0;
+    for (idx_t i = 0; i < ntotal; i++) {
+        if (sel.is_member (id_map[i])) {
+            // remove
+        } else {
+            id_map[j] = id_map[i];
+            j++;
+        }
+    }
+    FAISS_ASSERT (j == index->ntotal);
+    ntotal = j;
+    id_map.resize(ntotal);
+    return nremove;
+}
+
+
+
 
 IndexIDMap::~IndexIDMap ()
 {
     if (own_fields) delete index;
 }
 
-void IndexIDMap::set_typename ()
+/*****************************************************
+ * IndexIDMap2 implementation
+ *******************************************************/
+
+IndexIDMap2::IndexIDMap2 (Index *index): IndexIDMap (index)
+{}
+
+void IndexIDMap2::add_with_ids(idx_t n, const float* x, const  int64_t* xids)
 {
-    index_typename = "IDMap[" + index->index_typename + "]";
+    size_t prev_ntotal = ntotal;
+    IndexIDMap::add_with_ids (n, x, xids);
+    for (size_t i = prev_ntotal; i < ntotal; i++) {
+        rev_map [id_map [i]] = i;
+    }
 }
+
+void IndexIDMap2::construct_rev_map ()
+{
+    rev_map.clear ();
+    for (size_t i = 0; i < ntotal; i++) {
+        rev_map [id_map [i]] = i;
+    }
+}
+
+
+ int64_t IndexIDMap2::remove_ids(const IDSelector& sel)
+{
+    // This is quite inefficient
+     int64_t nremove = IndexIDMap::remove_ids (sel);
+    construct_rev_map ();
+    return nremove;
+}
+
+void IndexIDMap2::reconstruct (idx_t key, float * recons) const
+{
+    try {
+        index->reconstruct (rev_map.at (key), recons);
+    } catch (const std::out_of_range& e) {
+        FAISS_THROW_FMT ("key %ld not found", key);
+    }
+}
+
 
 
 /*****************************************************
@@ -97,7 +184,7 @@ void IndexIDMap::set_typename ()
 namespace {
 
 
-typedef Index::idx_t idx_t;
+typedef int64_t idx_t;
 
 
 template<class Job>
@@ -196,10 +283,10 @@ struct QueryJob {
 
 
 // add translation to all valid labels
-void translate_labels (long n, idx_t *labels, long translation)
+void translate_labels ( int64_t n, idx_t *labels,  int64_t translation)
 {
     if (translation == 0) return;
-    for (long i = 0; i < n; i++) {
+    for ( int64_t i = 0; i < n; i++) {
         if(labels[i] < 0) return;
         labels[i] += translation;
     }
@@ -213,17 +300,17 @@ void translate_labels (long n, idx_t *labels, long translation)
  */
 
 template <class C>
-void merge_tables (long n, long k, long nshard,
+void merge_tables ( int64_t n,  int64_t k,  int64_t nshard,
                    float *distances, idx_t *labels,
                    const float *all_distances,
                    idx_t *all_labels,
-                   const long *translations)
+                   const  int64_t *translations)
 {
     if(k == 0) {
         return;
     }
 
-    long stride = n * k;
+     int64_t stride = n * k;
 #pragma omp parallel
     {
         std::vector<int> buf (2 * nshard);
@@ -232,14 +319,14 @@ void merge_tables (long n, long k, long nshard,
         std::vector<float> buf2 (nshard);
         float * heap_vals = buf2.data();
 #pragma omp for
-        for (long i = 0; i < n; i++) {
+        for ( int64_t i = 0; i < n; i++) {
             // the heap maps values to the shard where they are
             // produced.
             const float *D_in = all_distances + i * k;
             const idx_t *I_in = all_labels + i * k;
             int heap_size = 0;
 
-            for (long s = 0; s < nshard; s++) {
+            for ( int64_t s = 0; s < nshard; s++) {
                 pointer[s] = 0;
                 if (I_in[stride * s] >= 0)
                     heap_push<C> (++heap_size, heap_vals, shard_ids,
@@ -300,8 +387,8 @@ void IndexShards::sync_with_shard_indexes ()
     ntotal = index0->ntotal;
     for (int i = 1; i < shard_indexes.size(); i++) {
         Index * index = shard_indexes[i];
-        FAISS_ASSERT (metric_type == index->metric_type);
-        FAISS_ASSERT (d == index->d);
+        FAISS_THROW_IF_NOT (metric_type == index->metric_type);
+        FAISS_THROW_IF_NOT (d == index->d);
         ntotal += index->ntotal;
     }
 }
@@ -335,46 +422,39 @@ void IndexShards::add (idx_t n, const float *x)
     add_with_ids (n, x, nullptr);
 }
 
- /**
-  * Cases (successive_ids, xids):
-  * - true, non-NULL       ERROR: it makes no sense to pass in ids and
-  *                        request them to be shifted
-  * - true, NULL           OK, but should be called only once (calls add()
-  *                        on sub-indexes).
-  * - false, non-NULL      OK: will call add_with_ids with passed in xids
-  *                        distributed evenly over shards
-  * - false, NULL          OK: will call add_with_ids on each sub-index,
-  *                        starting at ntotal
-  */
 
-void IndexShards::add_with_ids (idx_t n, const float * x, const long *xids)
+void IndexShards::add_with_ids (idx_t n, const float * x, const  int64_t *xids)
 {
 
-    FAISS_ASSERT(!(successive_ids && xids) ||
-        !"It makes no sense to pass in ids and request them to be shifted");
+    FAISS_THROW_IF_NOT_MSG(!(successive_ids && xids),
+                   "It makes no sense to pass in ids and "
+                   "request them to be shifted");
 
     if (successive_ids) {
-        FAISS_ASSERT(!xids ||
-           !"It makes no sense to pass in ids and request them to be shifted");
-        FAISS_ASSERT(ntotal == 0 ||
-            !"when adding to IndexShards with sucessive_ids, only add() "
-            "in a single pass is supported");
+      FAISS_THROW_IF_NOT_MSG(!xids,
+                       "It makes no sense to pass in ids and "
+                       "request them to be shifted");
+      FAISS_THROW_IF_NOT_MSG(ntotal == 0,
+                       "when adding to IndexShards with sucessive_ids, "
+                       "only add() in a single pass is supported");
     }
 
-    long nshard = shard_indexes.size();
-    const long *ids = xids;
+     int64_t nshard = shard_indexes.size();
+    const  int64_t *ids = xids;
+    ScopeDeleter< int64_t> del;
     if (!ids && !successive_ids) {
-        long *aids = new long[n];
-        for (long i = 0; i < n; i++)
+         int64_t *aids = new  int64_t[n];
+        for ( int64_t i = 0; i < n; i++)
             aids[i] = ntotal + i;
         ids = aids;
+        del.set (ids);
     }
 
     std::vector<Thread<AddJob > > asa (shard_indexes.size());
     int nt = 0;
     for (int i = 0; i < nshard; i++) {
-        long i0 = i * n / nshard;
-        long i1 = (i + 1) * n / nshard;
+         int64_t i0 = i * n / nshard;
+         int64_t i1 = (i + 1) * n / nshard;
 
         AddJob as = {this, i,
                        i1 - i0, x + i0 * d,
@@ -389,7 +469,6 @@ void IndexShards::add_with_ids (idx_t n, const float * x, const long *xids)
     for (int i = 0; i < nt; i++) {
         asa[i].wait();
     }
-    if (ids != xids) delete [] ids;
     ntotal += n;
 }
 
@@ -409,9 +488,11 @@ void IndexShards::search (
            idx_t n, const float *x, idx_t k,
            float *distances, idx_t *labels) const
 {
-    long nshard = shard_indexes.size();
+     int64_t nshard = shard_indexes.size();
     float *all_distances = new float [nshard * k * n];
     idx_t *all_labels = new idx_t [nshard * k * n];
+    ScopeDeleter<float> del (all_distances);
+    ScopeDeleter<idx_t> del2 (all_labels);
 
 #if 1
 
@@ -461,7 +542,7 @@ void IndexShards::search (
     }
 
 #endif
-    std::vector<long> translations (nshard, 0);
+    std::vector< int64_t> translations (nshard, 0);
     if (successive_ids) {
         translations[0] = 0;
         for (int s = 0; s + 1 < nshard; s++)
@@ -478,15 +559,10 @@ void IndexShards::search (
              n, k, nshard, distances, labels,
              all_distances, all_labels, translations.data ());
     }
-    delete [] all_distances;
-    delete [] all_labels;
-}
-
-
-void IndexShards::set_typename ()
-{
 
 }
+
+
 
 IndexShards::~IndexShards ()
 {
@@ -525,16 +601,15 @@ void IndexSplitVectors::sync_with_sub_indexes ()
     ntotal = index0->ntotal;
     for (int i = 1; i < sub_indexes.size(); i++) {
         Index * index = sub_indexes[i];
-        FAISS_ASSERT (metric_type == index->metric_type);
-        FAISS_ASSERT (ntotal == index->ntotal);
+        FAISS_THROW_IF_NOT (metric_type == index->metric_type);
+        FAISS_THROW_IF_NOT (ntotal == index->ntotal);
         sum_d += index->d;
     }
 
 }
 
-void IndexSplitVectors::add (idx_t n, const float *x)
-{
-    FAISS_ASSERT (!"not implemented");
+void IndexSplitVectors::add(idx_t /*n*/, const float* /*x*/) {
+  FAISS_THROW_MSG("not implemented");
 }
 
 namespace {
@@ -557,14 +632,14 @@ struct SplitQueryJob {
         if (index->verbose)
             printf ("begin query shard %d on %ld points\n", no, n);
         const Index * sub_index = index->sub_indexes[no];
-        long sub_d = sub_index->d, d = index->d;
+         int64_t sub_d = sub_index->d, d = index->d;
         idx_t ofs = 0;
         for (int i = 0; i < no; i++) ofs += index->sub_indexes[i]->d;
         float *sub_x = new float [sub_d * n];
+        ScopeDeleter<float> del (sub_x);
         for (idx_t i = 0; i < n; i++)
             memcpy (sub_x + i * sub_d, x + ofs + i * d, sub_d * sizeof (sub_x));
         sub_index->search (n, sub_x, k, distances, labels);
-        delete [] sub_x;
         if (index->verbose)
             printf ("end query shard %d\n", no);
     }
@@ -581,12 +656,16 @@ void IndexSplitVectors::search (
            idx_t n, const float *x, idx_t k,
            float *distances, idx_t *labels) const
 {
-    FAISS_ASSERT (k == 1 || !"search implemented only for k=1");
-    FAISS_ASSERT (sum_d == d || !"not enough indexes compared to # dimensions");
+    FAISS_THROW_IF_NOT_MSG (k == 1,
+                      "search implemented only for k=1");
+    FAISS_THROW_IF_NOT_MSG (sum_d == d,
+                      "not enough indexes compared to # dimensions");
 
-    long nshard = sub_indexes.size();
+     int64_t nshard = sub_indexes.size();
     float *all_distances = new float [nshard * k * n];
     idx_t *all_labels = new idx_t [nshard * k * n];
+    ScopeDeleter<float> del (all_distances);
+    ScopeDeleter<idx_t> del2 (all_labels);
 
     // pre-alloc because we don't want reallocs
     std::vector<Thread<SplitQueryJob> > qss (nshard);
@@ -610,40 +689,35 @@ void IndexSplitVectors::search (
         }
     }
 
-    long factor = 1;
+     int64_t factor = 1;
     for (int i = 0; i < nshard; i++) {
         if (i > 0) { // results of 0 are already in the table
             const float *distances_i = all_distances + i * k * n;
             const idx_t *labels_i = all_labels + i * k * n;
-            for (long j = 0; j < n; j++) {
+            for ( int64_t j = 0; j < n; j++) {
                 if (labels[j] >= 0 && labels_i[j] >= 0) {
                     labels[j] += labels_i[j] * factor;
                     distances[j] += distances_i[j];
                 } else {
                     labels[j] = -1;
-                    distances[j] = 0.0 / 0.0;
+					distances[j] = std::numeric_limits<float>::infinity();//0.0 / 0.0;
                 }
             }
         }
         factor *= sub_indexes[i]->ntotal;
     }
-    delete [] all_labels;
-    delete [] all_distances;
+
 }
 
-
-void IndexSplitVectors::train (idx_t n, const float *x)
-{
-    FAISS_ASSERT (!"not implemented");
+void IndexSplitVectors::train(idx_t /*n*/, const float* /*x*/) {
+  FAISS_THROW_MSG("not implemented");
 }
 
 void IndexSplitVectors::reset ()
 {
-    FAISS_ASSERT (!"not implemented");
+    FAISS_THROW_MSG ("not implemented");
 }
 
-void IndexSplitVectors::set_typename ()
-{}
 
 IndexSplitVectors::~IndexSplitVectors ()
 {
@@ -654,8 +728,4 @@ IndexSplitVectors::~IndexSplitVectors ()
 }
 
 
-
-
-
-
-}; // namespace faiss
+} // namespace faiss

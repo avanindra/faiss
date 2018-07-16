@@ -1,20 +1,18 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #include "IVFUtils.cuh"
 #include "../utils/DeviceUtils.h"
+#include "../utils/Limits.cuh"
 #include "../utils/Select.cuh"
 #include "../utils/StaticUtils.h"
 #include "../utils/Tensor.cuh"
-#include <limits>
 
 //
 // This kernel is split into a separate compilation unit to cut down
@@ -22,9 +20,6 @@
 //
 
 namespace faiss { namespace gpu {
-
-constexpr auto kMax = std::numeric_limits<float>::max();
-constexpr auto kMin = std::numeric_limits<float>::min();
 
 // This is warp divergence central, but this is really a final step
 // and happening a small number of times
@@ -66,13 +61,13 @@ pass2SelectLists(Tensor<float, 2, true> heapDistances,
                  int k,
                  IndicesOptions opt,
                  Tensor<float, 2, true> outDistances,
-                 Tensor<long, 2, true> outIndices) {
+                 Tensor<int64_t, 2, true> outIndices) {
   constexpr int kNumWarps = ThreadsPerBlock / kWarpSize;
 
   __shared__ float smemK[kNumWarps * NumWarpQ];
   __shared__ int smemV[kNumWarps * NumWarpQ];
 
-  constexpr auto kInit = Dir ? kMin : kMax;
+  constexpr auto kInit = Dir ? kFloatMin : kFloatMax;
   BlockSelect<float, int, Dir, Comparator<float>,
             NumWarpQ, NumThreadQ, ThreadsPerBlock>
     heap(kInit, -1, smemK, smemV, k);
@@ -111,7 +106,7 @@ pass2SelectLists(Tensor<float, 2, true> heapDistances,
     // is the very last step and it is happening a small number of
     // times (#queries x k).
     int v = smemV[i];
-    long index = -1;
+    int64_t index = -1;
 
     if (v != -1) {
       // `offset` is the offset of the intermediate result, as
@@ -136,11 +131,11 @@ pass2SelectLists(Tensor<float, 2, true> heapDistances,
 
       // This gives us our final index
       if (opt == INDICES_32_BIT) {
-        index = (long) ((int*) listIndices[listId])[listOffset];
+        index = (int64_t) ((int*) listIndices[listId])[listOffset];
       } else if (opt == INDICES_64_BIT) {
-        index = ((long*) listIndices[listId])[listOffset];
+        index = ((int64_t*) listIndices[listId])[listOffset];
       } else {
-        index = ((long) listId << 32 | (long) listOffset);
+        index = ((int64_t) listId << 32 | (int64_t) listOffset);
       }
     }
 
@@ -158,7 +153,7 @@ runPass2SelectLists(Tensor<float, 2, true>& heapDistances,
                     int k,
                     bool chooseLargest,
                     Tensor<float, 2, true>& outDistances,
-                    Tensor<long, 2, true>& outIndices,
+                    Tensor<int64_t, 2, true>& outIndices,
                     cudaStream_t stream) {
   constexpr auto kThreadsPerBlock = 128;
 
@@ -178,6 +173,7 @@ runPass2SelectLists(Tensor<float, 2, true>& heapDistances,
                                    indicesOptions,                      \
                                    outDistances,                        \
                                    outIndices);                         \
+    CUDA_TEST_ERROR();                                                  \
     return; /* success */                                               \
   } while (0)
 
@@ -207,7 +203,7 @@ runPass2SelectLists(Tensor<float, 2, true>& heapDistances,
   }
 
   // unimplemented / too many resources
-  FAISS_ASSERT(false);
+  FAISS_ASSERT_FMT(false, "unimplemented k value (%d)", k);
 
 #undef RUN_PASS_DIR
 #undef RUN_PASS

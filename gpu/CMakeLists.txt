@@ -19,9 +19,16 @@ list(REMOVE_ITEM faiss_gpu_cu ${CMAKE_CURRENT_SOURCE_DIR}/perf/CompareFlat.cu)
 list(REMOVE_ITEM faiss_gpu_cu ${CMAKE_CURRENT_SOURCE_DIR}/perf/CompareIVFFlat.cu)
 list(REMOVE_ITEM faiss_gpu_cu ${CMAKE_CURRENT_SOURCE_DIR}/perf/CompareIVFPQ.cu)
 list(REMOVE_ITEM faiss_gpu_cu ${CMAKE_CURRENT_SOURCE_DIR}/perf/CompareIVFPQGrid.cu)
+list(REMOVE_ITEM faiss_gpu_cu ${CMAKE_CURRENT_SOURCE_DIR}/perf/PerfSelect.cu)
 list(REMOVE_ITEM faiss_gpu_cpp ${CMAKE_CURRENT_SOURCE_DIR}/perf/PerfClustering.cpp)
 list(REMOVE_ITEM faiss_gpu_cpp ${CMAKE_CURRENT_SOURCE_DIR}/perf/PerfIVFPQAdd.cpp)
 list(REMOVE_ITEM faiss_gpu_cpp ${CMAKE_CURRENT_SOURCE_DIR}/perf/WriteIndex.cpp)
 
-cuda_add_library(${faiss_lib_gpu} STATIC ${faiss_gpu_headers} ${faiss_gpu_cpp} ${faiss_gpu_cuh} ${faiss_gpu_cu})
+message(STATUS "cmake linker flags : ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+
+cuda_add_library(gpufaiss_cu   ${faiss_gpu_cuh} ${faiss_gpu_cu})
+
+add_library( gpufaiss ${faiss_gpu_headers} ${faiss_gpu_cpp} )
+
+target_link_libraries( gpufaiss gpufaiss_cu )
 add_subdirectory(test)

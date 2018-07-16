@@ -1,9 +1,8 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
@@ -11,8 +10,8 @@
 #include <cstdlib>
 #include <cassert>
 
-#include <faiss/IndexFlat.h>
-#include <faiss/IndexIVF.h>
+#include <IndexFlat.h>
+#include <IndexIVFFlat.h>
 
 
 int main() {
@@ -48,7 +47,7 @@ int main() {
     index.add(nb, xb);
 
     {       // search xq
-        long *I = new long[k * nq];
+         int64_t *I = new  int64_t[k * nq];
         float *D = new float[k * nq];
 
         index.search(nq, xq, k, D, I);

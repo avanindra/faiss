@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #include "IVFFlat.cuh"
 #include "../GpuResources.h"
@@ -31,7 +29,8 @@ IVFFlat::IVFFlat(GpuResources* resources,
                  FlatIndex* quantizer,
                  bool l2Distance,
                  bool useFloat16,
-                 IndicesOptions indicesOptions) :
+                 IndicesOptions indicesOptions,
+                 MemorySpace space) :
     IVFBase(resources,
             quantizer,
 #ifdef FAISS_USE_FLOAT16
@@ -41,13 +40,10 @@ IVFFlat::IVFFlat(GpuResources* resources,
 #else
             sizeof(float) * quantizer->getDim(),
 #endif
-            indicesOptions),
+            indicesOptions,
+            space),
     l2Distance_(l2Distance),
     useFloat16_(useFloat16) {
-#ifndef FAISS_USE_FLOAT16
-  FAISS_ASSERT(!useFloat16 | !"float16 unsupported");
-  useFloat16_ = false;
-#endif
 }
 
 IVFFlat::~IVFFlat() {
@@ -56,7 +52,7 @@ IVFFlat::~IVFFlat() {
 void
 IVFFlat::addCodeVectorsFromCpu(int listId,
                                const float* vecs,
-                               const long* indices,
+                               const  int64_t* indices,
                                size_t numVecs) {
   // This list must already exist
   FAISS_ASSERT(listId < deviceListData_.size());
@@ -94,6 +90,9 @@ IVFFlat::addCodeVectorsFromCpu(int listId,
                      lengthInBytes,
                      stream,
                      true /* exact reserved size */);
+#else
+    // we are not compiling with float16 support
+    FAISS_ASSERT(false);
 #endif
   } else {
     listData->append((unsigned char*) vecs,
@@ -127,7 +126,7 @@ IVFFlat::addCodeVectorsFromCpu(int listId,
 
 int
 IVFFlat::classifyAndAddVectors(Tensor<float, 2, true>& vecs,
-                               Tensor<long, 1, true>& indices) {
+                               Tensor< int64_t, 1, true>& indices) {
   FAISS_ASSERT(vecs.getSize(0) == indices.getSize(0));
   FAISS_ASSERT(vecs.getSize(1) == dim_);
 
@@ -208,7 +207,7 @@ IVFFlat::classifyAndAddVectors(Tensor<float, 2, true>& vecs,
       if ((indicesOptions_ == INDICES_32_BIT) ||
           (indicesOptions_ == INDICES_64_BIT)) {
         size_t indexSize =
-          (indicesOptions_ == INDICES_32_BIT) ? sizeof(int) : sizeof(long);
+          (indicesOptions_ == INDICES_32_BIT) ? sizeof(int) : sizeof( int64_t);
 
         indices->resize(indices->size() + counts.second * indexSize, stream);
       } else if (indicesOptions_ == INDICES_CPU) {
@@ -244,7 +243,7 @@ IVFFlat::classifyAndAddVectors(Tensor<float, 2, true>& vecs,
   // map. We already resized our map above.
   if (indicesOptions_ == INDICES_CPU) {
     // We need to maintain the indices on the CPU side
-    HostTensor<long, 1, true> hostIndices(indices, stream);
+    HostTensor< int64_t, 1, true> hostIndices(indices, stream);
 
     for (int i = 0; i < hostIndices.getSize(0); ++i) {
       int listId = listIdsHost[i];
@@ -288,7 +287,7 @@ IVFFlat::query(Tensor<float, 2, true>& queries,
                int nprobe,
                int k,
                Tensor<float, 2, true>& outDistances,
-               Tensor<long, 2, true>& outIndices) {
+               Tensor< int64_t, 2, true>& outIndices) {
   auto& mem = resources_->getMemoryManagerCurrentDevice();
   auto stream = resources_->getDefaultStreamCurrentDevice();
 
@@ -335,7 +334,7 @@ IVFFlat::query(Tensor<float, 2, true>& queries,
   // FIXME: we might ultimately be calling this function with inputs
   // from the CPU, these are unnecessary copies
   if (indicesOptions_ == INDICES_CPU) {
-    HostTensor<long, 2, true> hostOutIndices(outIndices, stream);
+    HostTensor< int64_t, 2, true> hostOutIndices(outIndices, stream);
 
     ivfOffsetToUserIndex(hostOutIndices.data(),
                          numLists_,

@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #include "PQScanMultiPassNoPrecomputed.cuh"
 #include "../GpuResources.h"
@@ -21,11 +19,12 @@
 #include "../utils/LoadStoreOperators.cuh"
 #include "../utils/NoTypeTensor.cuh"
 #include "../utils/StaticUtils.h"
-
+#include <algorithm>
 #include "../utils/HostTensor.cuh"
 
 namespace faiss { namespace gpu {
 
+// This must be kept in sync with PQCodeDistances.cu
 bool isSupportedNoPrecomputedSubDimSize(int dims) {
   switch (dims) {
     case 1:
@@ -37,14 +36,15 @@ bool isSupportedNoPrecomputedSubDimSize(int dims) {
     case 10:
     case 12:
     case 16:
+    case 20:
+    case 24:
+    case 28:
     case 32:
       return true;
-      break;
     default:
       // FIXME: larger sizes require too many registers - we need the
       // MM implementation working
       return false;
-      break;
   }
 }
 
@@ -240,7 +240,7 @@ runMultiPassTile(Tensor<float, 2, true>& queries,
                  Tensor<int, 3, true>& heapIndices,
                  int k,
                  Tensor<float, 2, true>& outDistances,
-                 Tensor<long, 2, true>& outIndices,
+                 Tensor<int64_t, 2, true>& outIndices,
                  cudaStream_t stream) {
 #ifndef FAISS_USE_FLOAT16
   FAISS_ASSERT(!useFloat16Lookup);
@@ -370,6 +370,8 @@ runMultiPassTile(Tensor<float, 2, true>& queries,
 #undef RUN_PQ_OPT
   }
 
+  CUDA_TEST_ERROR();
+
   // k-select the output in chunks, to increase parallelism
   runPass1SelectLists(prefixSumOffsets,
                       allDistances,
@@ -395,8 +397,6 @@ runMultiPassTile(Tensor<float, 2, true>& queries,
                       outDistances,
                       outIndices,
                       stream);
-
-  CUDA_VERIFY(cudaGetLastError());
 }
 
 void runPQScanMultiPassNoPrecomputed(Tensor<float, 2, true>& queries,
@@ -416,7 +416,7 @@ void runPQScanMultiPassNoPrecomputed(Tensor<float, 2, true>& queries,
                                      // output
                                      Tensor<float, 2, true>& outDistances,
                                      // output
-                                     Tensor<long, 2, true>& outIndices,
+                                     Tensor<int64_t, 2, true>& outIndices,
                                      GpuResources* res) {
   constexpr int kMinQueryTileSize = 8;
   constexpr int kMaxQueryTileSize = 128;
@@ -505,7 +505,6 @@ void runPQScanMultiPassNoPrecomputed(Tensor<float, 2, true>& queries,
   }
 #else
   FAISS_ASSERT(!useFloat16Lookup);
-  int codeSize = sizeof(float);
 #endif
 
   int totalCodeDistancesSize =

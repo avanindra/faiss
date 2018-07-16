@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #pragma once
 
@@ -33,7 +31,7 @@ void runUpdateListPointers(Tensor<int, 1, true>& listIds,
 void runIVFPQInvertedListAppend(Tensor<int, 1, true>& listIds,
                                 Tensor<int, 1, true>& listOffset,
                                 Tensor<int, 2, true>& encodings,
-                                Tensor<long, 1, true>& indices,
+                                Tensor<int64_t, 1, true>& indices,
                                 thrust::device_vector<void*>& listCodes,
                                 thrust::device_vector<void*>& listIndices,
                                 IndicesOptions indicesOptions,
@@ -43,7 +41,7 @@ void runIVFPQInvertedListAppend(Tensor<int, 1, true>& listIds,
 void runIVFFlatInvertedListAppend(Tensor<int, 1, true>& listIds,
                                   Tensor<int, 1, true>& listOffset,
                                   Tensor<float, 2, true>& vecs,
-                                  Tensor<long, 1, true>& indices,
+                                  Tensor<int64_t, 1, true>& indices,
                                   bool useFloat16,
                                   thrust::device_vector<void*>& listData,
                                   thrust::device_vector<void*>& listIndices,

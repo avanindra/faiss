@@ -1,26 +1,19 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-/* Copyright 2004-present Facebook. All Rights Reserved. */
+// -*- c++ -*-
+
 /* Function for soft heap */
 
 #include "Heap.h"
 
 
 namespace faiss {
-
-
-
-
-
-
-
 
 
 template <typename C>
@@ -41,7 +34,7 @@ void HeapArray<C>::reorder ()
 
 template <typename C>
 void HeapArray<C>::addn (size_t nj, const T *vin, TI j0,
-                         size_t i0, long ni)
+                         size_t i0, int64_t ni)
 {
     if (ni == -1) ni = nh;
     assert (i0 >= 0 && i0 + ni <= nh);
@@ -64,7 +57,7 @@ void HeapArray<C>::addn (size_t nj, const T *vin, TI j0,
 template <typename C>
 void HeapArray<C>::addn_with_ids (
      size_t nj, const T *vin, const TI *id_in,
-     long id_stride, size_t i0, long ni)
+     int64_t id_stride, size_t i0, int64_t ni)
 {
     if (id_in == nullptr) {
         addn (nj, vin, 0, i0, ni);
@@ -96,7 +89,7 @@ void HeapArray<C>::per_line_extrema (
 {
 #pragma omp parallel for
     for (size_t j = 0; j < nh; j++) {
-        long imin = -1;
+        int64_t imin = -1;
         typename C::T xval = C::Crev::neutral ();
         const typename C::T * x_ = val + j * k;
         for (size_t i = 0; i < k; i++)
@@ -121,13 +114,10 @@ void HeapArray<C>::per_line_extrema (
 
 // explicit instanciations
 
-template class HeapArray<CMin <float, long> >;
-template class HeapArray<CMax <float, long> >;
-template class HeapArray<CMin <int, long> >;
-template class HeapArray<CMax <int, long> >;
-
-
-
+template class HeapArray<CMin <float, int64_t> >;
+template class HeapArray<CMax <float, int64_t> >;
+template class HeapArray<CMin <int, int64_t> >;
+template class HeapArray<CMax <int, int64_t> >;
 
 
 }  // END namespace fasis

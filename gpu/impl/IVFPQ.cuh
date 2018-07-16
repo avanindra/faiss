@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #pragma once
 
@@ -26,7 +24,8 @@ class IVFPQ : public IVFBase {
         int bitsPerSubQuantizer,
         float* pqCentroidData,
         IndicesOptions indicesOptions,
-        bool useFloat16LookupTables);
+        bool useFloat16LookupTables,
+        MemorySpace space);
 
   /// Returns true if we support PQ in this size
   static bool isSupportedPQCodeLength(int size);
@@ -45,7 +44,7 @@ class IVFPQ : public IVFBase {
   /// resident on either the host or the device
   void addCodeVectorsFromCpu(int listId,
                              const void* codes,
-                             const long* indices,
+                             const  int64_t* indices,
                              size_t numVecs);
 
   /// Calcuates the residual and quantizes the vectors, adding them to
@@ -54,7 +53,7 @@ class IVFPQ : public IVFBase {
   /// Returns the number of vectors successfully added. Vectors may
   /// not be able to be added because they contain NaNs.
   int classifyAndAddVectors(Tensor<float, 2, true>& vecs,
-                            Tensor<long, 1, true>& indices);
+                            Tensor< int64_t, 1, true>& indices);
 
   /// Find the approximate k nearest neigbors for `queries` against
   /// our database
@@ -62,7 +61,7 @@ class IVFPQ : public IVFBase {
              int nprobe,
              int k,
              Tensor<float, 2, true>& outDistances,
-             Tensor<long, 2, true>& outIndices);
+             Tensor< int64_t, 2, true>& outIndices);
 
   /// Return the list codes of a particular list back to the CPU
   std::vector<unsigned char> getListCodes(int listId) const;
@@ -88,7 +87,7 @@ class IVFPQ : public IVFBase {
                               DeviceTensor<int, 2, true>& coarseIndices,
                               int k,
                               Tensor<float, 2, true>& outDistances,
-                              Tensor<long, 2, true>& outIndices);
+                              Tensor< int64_t, 2, true>& outIndices);
 
   /// Runs kernels for scanning inverted lists without precomputed codes
   void runPQNoPrecomputedCodes_(Tensor<float, 2, true>& queries,
@@ -96,7 +95,7 @@ class IVFPQ : public IVFBase {
                                 DeviceTensor<int, 2, true>& coarseIndices,
                                 int k,
                                 Tensor<float, 2, true>& outDistances,
-                                Tensor<long, 2, true>& outIndices);
+                                Tensor< int64_t, 2, true>& outIndices);
 
  private:
   /// Number of sub-quantizers per vector

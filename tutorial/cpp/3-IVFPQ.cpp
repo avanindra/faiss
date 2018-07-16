@@ -1,17 +1,16 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
 #include <cstdio>
 #include <cstdlib>
 
-#include <faiss/IndexFlat.h>
-#include <faiss/IndexIVFPQ.h>
+#include "IndexFlat.h"
+#include <IndexIVFPQ.h>
 
 
 int main() {
@@ -23,14 +22,14 @@ int main() {
     float *xq = new float[d * nq];
 
     for(int i = 0; i < nb; i++) {
-        for(int j = 0; j < d; j++)
-            xb[d * i + j] = drand48();
+		for (int j = 0; j < d; j++)
+			xb[d * i + j] = rand() / (RAND_MAX + 1.0); //drand48();
         xb[d * i] += i / 1000.;
     }
 
     for(int i = 0; i < nq; i++) {
         for(int j = 0; j < d; j++)
-            xq[d * i + j] = drand48();
+            xq[d * i + j] = rand() / (RAND_MAX + 1.0); //drand48();
         xq[d * i] += i / 1000.;
     }
 
@@ -45,7 +44,7 @@ int main() {
     index.add(nb, xb);
 
     {       // sanity check
-        long *I = new long[k * 5];
+         int64_t *I = new  int64_t[k * 5];
         float *D = new float[k * 5];
 
         index.search(5, xb, k, D, I);
@@ -69,7 +68,7 @@ int main() {
     }
 
     {       // search xq
-        long *I = new long[k * nq];
+         int64_t *I = new  int64_t[k * nq];
         float *D = new float[k * nq];
 
         index.nprobe = 10;

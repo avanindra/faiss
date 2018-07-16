@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved
 // -*- c++ -*-
 
 #include "utils.h"
@@ -17,12 +15,12 @@
 #include <cstring>
 #include <cmath>
 
-#include <smmintrin.h>
-#include <mmintrin.h>
+#include <immintrin.h>
 
-#include <sys/time.h>
+
+//#include <sys/time.h>
 #include <sys/types.h>
-#include <unistd.h>
+//#include <unistd.h>
 
 #include <omp.h>
 
@@ -32,11 +30,12 @@
 
 #include "AuxIndexStructures.h"
 #include "FaissAssert.h"
+#include "opencvincludes.h"
 
 
 
 #ifndef FINTEGER
-#define FINTEGER long
+#define FINTEGER  int64_t
 #endif
 
 
@@ -68,10 +67,17 @@ int sorgqr_(FINTEGER *m, FINTEGER *n, FINTEGER *k, float *a,
 
 namespace faiss {
 
-double getmillisecs () {
-    struct timeval tv;
-    gettimeofday (&tv, nullptr);
-    return tv.tv_sec * 1e3 + tv.tv_usec * 1e-3;
+#ifdef __AVX__
+#define USE_AVX
+#endif
+
+double getmillisecs () 
+{
+    //struct timeval tv;
+    //gettimeofday (&tv, nullptr);
+    //return tv.tv_sec * 1e3 + tv.tv_usec * 1e-3;
+
+	return cv::getTickCount() * 1000.0 / cv::getTickFrequency();
 }
 
 
@@ -83,7 +89,7 @@ size_t get_mem_usage_kb ()
     char fname[256];
     snprintf (fname, 256, "/proc/%d/status", pid);
     FILE * f = fopen (fname, "r");
-    FAISS_ASSERT (f || !"cannot open proc status file") ;
+    FAISS_THROW_IF_NOT_MSG (f, "cannot open proc status file");
     size_t sz = 0;
     for (;;) {
         char buf [256];
@@ -128,39 +134,43 @@ size_t get_mem_usage_kb ()
  */
 
 
-#ifdef __linux__
+#if 1//def //__linux__
 
 
 
 
 int RandomGenerator::rand_int ()
 {
-    int32_t a;
-    random_r (&rand_data, &a);
-    return a;
+	int nextVal = (int)_rng(std::numeric_limits<int>::max());
+    return nextVal;
 }
 
-long RandomGenerator::rand_long ()
+ int64_t RandomGenerator::rand_long ()
 {
-    int32_t a, b;
-    random_r (&rand_data, &a);
-    random_r (&rand_data, &b);
-    return long(a) | long(b) << 31;
-}
+    //int32_t a, b;
+    //random_r (&rand_data, &a);
+    //random_r (&rand_data, &b);
+    //return  int64_t(a) |  int64_t(b) << 31;
+	 return _rng.next();
+ }
 
 
-RandomGenerator::RandomGenerator (long seed)
+RandomGenerator::RandomGenerator ( int64_t seed)
 {
-    memset (&rand_data, 0, sizeof (rand_data));
-    initstate_r (seed, rand_state, sizeof (rand_state), &rand_data);
+    //memset (&rand_data, 0, sizeof (rand_data));
+    //initstate_r (seed, rand_state, sizeof (rand_state), &rand_data);
+
+	_rng = cv::RNG(seed);
 }
 
 
 RandomGenerator::RandomGenerator (const RandomGenerator & other)
 {
-    memcpy (rand_state, other.rand_state, sizeof(rand_state));
-    rand_data = other.rand_data;
-    setstate_r (rand_state, &rand_data);
+    //memcpy (rand_state, other.rand_state, sizeof(rand_state));
+    //rand_data = other.rand_data;
+    //setstate_r (rand_state, &rand_data);
+
+	_rng = other._rng;
 }
 
 
@@ -170,7 +180,7 @@ extern "C" {
 int rand_r(unsigned *seed);
 }
 
-RandomGenerator::RandomGenerator (long seed)
+RandomGenerator::RandomGenerator ( int64_t seed)
 {
     rand_state = seed;
 }
@@ -190,9 +200,9 @@ int RandomGenerator::rand_int ()
     return rand_r(&rand_state) ^ lowbits;
 }
 
-long RandomGenerator::rand_long ()
+ int64_t RandomGenerator::rand_long ()
 {
-    return long(random()) | long(random()) << 31;
+    return  int64_t(random()) |  int64_t(random()) << 31;
 }
 
 
@@ -224,7 +234,7 @@ double RandomGenerator::rand_double ()
 
 /* Generate a set of random floating point values such that x[i] in [0,1]
    multi-threading. For this reason, we rely on re-entreant functions.  */
-void float_rand (float * x, size_t n, long seed)
+void float_rand (float * x, size_t n,  int64_t seed)
 {
     // only try to parallelize on large enough arrays
     const size_t nblock = n < 1024 ? 1 : 1024;
@@ -246,7 +256,7 @@ void float_rand (float * x, size_t n, long seed)
 }
 
 
-void float_randn (float * x, size_t n, long seed)
+void float_randn (float * x, size_t n,  int64_t seed)
 {
     // only try to parallelize on large enough arrays
     const size_t nblock = n < 1024 ? 1 : 1024;
@@ -283,7 +293,7 @@ void float_randn (float * x, size_t n, long seed)
 
 
 /* Integer versions */
-void long_rand (long * x, size_t n, long seed)
+void  int64_t_rand ( int64_t * x, size_t n,  int64_t seed)
 {
     // only try to parallelize on large enough arrays
     const size_t nblock = n < 1024 ? 1 : 1024;
@@ -299,13 +309,13 @@ void long_rand (long * x, size_t n, long seed)
         const size_t istart = j * n / nblock;
         const size_t iend = (j + 1) * n / nblock;
         for (size_t i = istart; i < iend; i++)
-            x[i] = rng.rand_long ();
+            x[i] = rng.rand_long();
     }
 }
 
 
 
-void rand_perm (int *perm, size_t n, long seed)
+void rand_perm (int *perm, size_t n,  int64_t seed)
 {
     for (size_t i = 0; i < n; i++) perm[i] = i;
 
@@ -320,7 +330,7 @@ void rand_perm (int *perm, size_t n, long seed)
 
 
 
-void byte_rand (uint8_t * x, size_t n, long seed)
+void byte_rand (uint8_t * x, size_t n,  int64_t seed)
 {
     // only try to parallelize on large enough arrays
     const size_t nblock = n < 1024 ? 1 : 1024;
@@ -338,7 +348,7 @@ void byte_rand (uint8_t * x, size_t n, long seed)
 
         size_t i;
         for (i = istart; i < iend; i++)
-            x[i] = rng.rand_long ();
+            x[i] = rng.rand_long();
     }
 }
 
@@ -412,11 +422,61 @@ void reflection_ref (const float * u, float * x, size_t n, size_t d, size_t nu)
 
 */
 
+
+/*********************************************************
+ * Reference implementations
+ */
+
+
+
+/* same without SSE */
+float fvec_L2sqr_ref (const float * x,
+                     const float * y,
+                     size_t d)
+{
+    size_t i;
+    float res = 0;
+    for (i = 0; i < d; i++) {
+        const float tmp = x[i] - y[i];
+       res += tmp * tmp;
+    }
+    return res;
+}
+
+float fvec_inner_product_ref (const float * x,
+                             const float * y,
+                             size_t d)
+{
+    size_t i;
+    float res = 0;
+    for (i = 0; i < d; i++)
+       res += x[i] * y[i];
+    return res;
+}
+
+float fvec_norm_L2sqr_ref (const float * __restrict x,
+                          size_t d)
+{
+    size_t i;
+    double res = 0;
+    for (i = 0; i < d; i++)
+       res += x[i] * x[i];
+    return res;
+}
+
+
+/*********************************************************
+ * SSE and AVX implementations
+ */
+
 // reads 0 <= d < 4 floats as __m128
 static inline __m128 masked_read (int d, const float *x)
 {
     assert (0 <= d && d < 4);
-    __attribute__((__aligned__(16))) float buf[4] = {0, 0, 0, 0};
+   // __attribute__((__aligned__(16))) float buf[4] = {0, 0, 0, 0};
+
+	__declspec(align(16))  float buf[4] = { 0, 0, 0, 0 }; //FIX
+
     switch (d) {
       case 3:
         buf[2] = x[2];
@@ -426,50 +486,131 @@ static inline __m128 masked_read (int d, const float *x)
         buf[0] = x[0];
     }
     return _mm_load_ps (buf);
+    // cannot use AVX2 _mm_mask_set1_epi32
 }
+
+#ifdef USE_AVX
+
+// reads 0 <= d < 8 floats as __m256
+static inline __m256 masked_read_8 (int d, const float *x)
+{
+    assert (0 <= d && d < 8);
+    if (d < 4) {
+        __m256 res = _mm256_setzero_ps ();
+        res = _mm256_insertf128_ps (res, masked_read (d, x), 0);
+        return res;
+    } else {
+        __m256 res = _mm256_setzero_ps ();
+        res = _mm256_insertf128_ps (res, _mm_loadu_ps (x), 0);
+        res = _mm256_insertf128_ps (res, masked_read (d - 4, x + 4), 1);
+        return res;
+    }
+}
+
+float fvec_inner_product (const float * x,
+                          const float * y,
+                          size_t d)
+{
+    __m256 msum1 = _mm256_setzero_ps();
+
+    while (d >= 8) {
+        __m256 mx = _mm256_loadu_ps (x); x += 8;
+        __m256 my = _mm256_loadu_ps (y); y += 8;
+        msum1 = _mm256_add_ps (msum1, _mm256_mul_ps (mx, my));
+        d -= 8;
+    }
+
+    __m128 msum2 = _mm256_extractf128_ps(msum1, 1);
+    msum2 +=       _mm256_extractf128_ps(msum1, 0);
+
+    if (d >= 4) {
+        __m128 mx = _mm_loadu_ps (x); x += 4;
+        __m128 my = _mm_loadu_ps (y); y += 4;
+        msum2 = _mm_add_ps (msum2, _mm_mul_ps (mx, my));
+        d -= 4;
+    }
+
+    if (d > 0) {
+        __m128 mx = masked_read (d, x);
+        __m128 my = masked_read (d, y);
+        msum2 = _mm_add_ps (msum2, _mm_mul_ps (mx, my));
+    }
+
+    msum2 = _mm_hadd_ps (msum2, msum2);
+    msum2 = _mm_hadd_ps (msum2, msum2);
+    return  _mm_cvtss_f32 (msum2);
+}
+
+float fvec_L2sqr (const float * x,
+                 const float * y,
+                 size_t d)
+{
+    __m256 msum1 = _mm256_setzero_ps();
+
+    while (d >= 8) {
+        __m256 mx = _mm256_loadu_ps (x); x += 8;
+        __m256 my = _mm256_loadu_ps (y); y += 8;
+        const __m256 a_m_b1 = mx - my;
+        msum1 += a_m_b1 * a_m_b1;
+        d -= 8;
+    }
+
+    __m128 msum2 = _mm256_extractf128_ps(msum1, 1);
+    msum2 +=       _mm256_extractf128_ps(msum1, 0);
+
+    if (d >= 4) {
+        __m128 mx = _mm_loadu_ps (x); x += 4;
+        __m128 my = _mm_loadu_ps (y); y += 4;
+        const __m128 a_m_b1 = mx - my;
+        msum2 += a_m_b1 * a_m_b1;
+        d -= 4;
+    }
+
+    if (d > 0) {
+        __m128 mx = masked_read (d, x);
+        __m128 my = masked_read (d, y);
+        __m128 a_m_b1 = mx - my;
+        msum2 += a_m_b1 * a_m_b1;
+    }
+
+    msum2 = _mm_hadd_ps (msum2, msum2);
+    msum2 = _mm_hadd_ps (msum2, msum2);
+    return  _mm_cvtss_f32 (msum2);
+}
+
+#else
 
 /* SSE-implementation of L2 distance */
 float fvec_L2sqr (const float * x,
                  const float * y,
                  size_t d)
 {
-    __m128 mx, my;
     __m128 msum1 = _mm_setzero_ps();
 
     while (d >= 4) {
-        mx = _mm_loadu_ps (x); x += 4;
-        my = _mm_loadu_ps (y); y += 4;
-        const __m128 a_m_b1 = _mm_sub_ps (mx, my);
-        msum1 = _mm_add_ps (msum1, _mm_mul_ps (a_m_b1, a_m_b1));
+        __m128 mx = _mm_loadu_ps (x); x += 4;
+        __m128 my = _mm_loadu_ps (y); y += 4;
+        const __m128 a_m_b1 = _mm_sub_ps(mx, my); //mx - my; //FIX
+        //msum1 += a_m_b1 * a_m_b1;
+		msum1 = _mm_add_ps(msum1, _mm_mul_ps(a_m_b1, a_m_b1));//FIX
         d -= 4;
     }
 
-    // add the last 1, 2 or 3 values
-    mx = masked_read (d, x);
-    my = masked_read (d, y);
-    __m128 a_m_b1 = _mm_sub_ps (mx, my);
+    if (d > 0) {
+        // add the last 1, 2 or 3 values
+        __m128 mx = masked_read (d, x);
+        __m128 my = masked_read (d, y);
+		__m128 a_m_b1 = _mm_sub_ps(mx, my); //mx - my; FIX
+		//msum1 += _mm_mul_ps(a_m_b1, a_m_b1); //a_m_b1 * a_m_b1;
 
-    msum1 = _mm_add_ps (msum1, _mm_mul_ps (a_m_b1, a_m_b1));
+		msum1 = _mm_add_ps(msum1, _mm_mul_ps(a_m_b1, a_m_b1));//FIX
+    }
 
     msum1 = _mm_hadd_ps (msum1, msum1);
     msum1 = _mm_hadd_ps (msum1, msum1);
     return  _mm_cvtss_f32 (msum1);
 }
 
-
-/* same without SSE */
-float fvec_L2sqr_ref (const float * x,
-                     const float * y,
-                     size_t d)
-{
-    size_t i;
-    float res_ = 0;
-    for (i = 0; i < d; i++) {
-        const float tmp = x[i] - y[i];
-       res_ += tmp * tmp;
-    }
-    return res_;
-}
 
 float fvec_inner_product (const float * x,
                          const float * y,
@@ -498,17 +639,8 @@ float fvec_inner_product (const float * x,
 }
 
 
-float fvec_inner_product_ref (const float * x,
-                             const float * y,
-                             size_t d)
-{
-    size_t i;
-    float res_ = 0;
-    for (i = 0; i < d; i++)
-       res_ += x[i] * y[i];
-    return res_;
-}
 
+#endif
 
 float fvec_norm_L2sqr (const float *  x,
                       size_t d)
@@ -531,16 +663,11 @@ float fvec_norm_L2sqr (const float *  x,
 }
 
 
-float fvec_norm_L2sqr_ref (const float * __restrict x,
-                          size_t d)
-{
-    size_t i;
-    double res_ = 0;
-    for (i = 0; i < d; i++)
-       res_ += x[i] * x[i];
-    return res_;
-}
 
+
+/***************************************************************************
+ * Matrix/vector ops
+ ***************************************************************************/
 
 
 
@@ -649,22 +776,22 @@ static void knn_inner_product_sse (const float * x,
 
 #pragma omp parallel for
     for (size_t i = 0; i < nx; i++) {
-        const float * x_ = x + i * d;
-        const float * y_ = y;
+        const float * x_i = x + i * d;
+        const float * y_j = y;
 
         float * __restrict simi = res->get_val(i);
-        long * __restrict idxi = res->get_ids (i);
+         int64_t * __restrict idxi = res->get_ids (i);
 
         minheap_heapify (k, simi, idxi);
 
         for (size_t j = 0; j < ny; j++) {
-            float ip = fvec_inner_product (x_, y_, d);
+            float ip = fvec_inner_product (x_i, y_j, d);
 
             if (ip > simi[0]) {
                 minheap_pop (k, simi, idxi);
                 minheap_push (k, simi, idxi, ip, j);
             }
-            y_ += d;
+            y_j += d;
         }
         minheap_reorder (k, simi, idxi);
     }
@@ -681,21 +808,21 @@ static void knn_L2sqr_sse (
 
 #pragma omp parallel for
     for (size_t i = 0; i < nx; i++) {
-        const float * x_ = x + i * d;
-        const float * y_ = y;
+        const float * x_i = x + i * d;
+        const float * y_j = y;
         size_t j;
         float * __restrict simi = res->get_val(i);
-        long * __restrict idxi = res->get_ids (i);
+         int64_t * __restrict idxi = res->get_ids (i);
 
         maxheap_heapify (k, simi, idxi);
         for (j = 0; j < ny; j++) {
-            float disij = fvec_L2sqr (x_, y_, d);
+            float disij = fvec_L2sqr (x_i, y_j, d);
 
             if (disij < simi[0]) {
                 maxheap_pop (k, simi, idxi);
                 maxheap_push (k, simi, idxi, disij, j);
             }
-            y_ += d;
+            y_j += d;
         }
         maxheap_reorder (k, simi, idxi);
     }
@@ -793,7 +920,7 @@ static void knn_L2sqr_blas (const float * x,
 #pragma omp parallel for
             for (size_t i = i0; i < i1; i++) {
                 float * __restrict simi = res->get_val(i);
-                long * __restrict idxi = res->get_ids (i);
+                 int64_t * __restrict idxi = res->get_ids (i);
                 const float *ip_line = ip_block + (i - i0) * (j1 - j0);
 
                 for (size_t j = j0; j < j1; j++) {
@@ -829,12 +956,14 @@ static void knn_L2sqr_blas (const float * x,
  * KNN driver functions
  *******************************************************/
 
+int distance_compute_blas_threshold = 20;
+
 void knn_inner_product (const float * x,
         const float * y,
         size_t d, size_t nx, size_t ny,
         float_minheap_array_t * res)
 {
-    if (d % 4 == 0 && nx < 20) {
+    if (d % 4 == 0 && nx < distance_compute_blas_threshold) {
         knn_inner_product_sse (x, y, d, nx, ny, res);
     } else {
         knn_inner_product_blas (x, y, d, nx, ny, res);
@@ -844,8 +973,8 @@ void knn_inner_product (const float * x,
 
 
 struct NopDistanceCorrection {
-    float operator()(float dis, size_t qno, size_t bno) const {
-        return dis;
+  float operator()(float dis, size_t /*qno*/, size_t /*bno*/) const {
+    return dis;
     }
 };
 
@@ -854,7 +983,7 @@ void knn_L2sqr (const float * x,
                 size_t d, size_t nx, size_t ny,
                 float_maxheap_array_t * res)
 {
-    if (d % 4 == 0 && nx < 20) {
+    if (d % 4 == 0 && nx < distance_compute_blas_threshold) {
         knn_L2sqr_sse (x, y, d, nx, ny, res);
     } else {
         NopDistanceCorrection nop;
@@ -864,8 +993,8 @@ void knn_L2sqr (const float * x,
 
 struct BaseShiftDistanceCorrection {
     const float *base_shift;
-    float operator()(float dis, size_t qno, size_t bno) const {
-        return dis - base_shift[bno];
+    float operator()(float dis, size_t /*qno*/, size_t bno) const {
+      return dis - base_shift[bno];
     }
 };
 
@@ -891,12 +1020,12 @@ void knn_L2sqr_base_shift (
 void fvec_inner_products_by_idx (float * __restrict ip,
                                  const float * x,
                                  const float * y,
-                                 const long * __restrict ids, /* for y vecs */
+                                 const  int64_t * __restrict ids, /* for y vecs */
                                  size_t d, size_t nx, size_t ny)
 {
 #pragma omp parallel for
     for (size_t j = 0; j < nx; j++) {
-        const long * __restrict idsj = ids + j * ny;
+        const  int64_t * __restrict idsj = ids + j * ny;
         const float * xj = x + j * d;
         float * __restrict ipj = ip + j * ny;
         for (size_t i = 0; i < ny; i++) {
@@ -912,12 +1041,12 @@ void fvec_inner_products_by_idx (float * __restrict ip,
 void fvec_L2sqr_by_idx (float * __restrict dis,
                         const float * x,
                         const float * y,
-                        const long * __restrict ids, /* ids of y vecs */
+                        const  int64_t * __restrict ids, /* ids of y vecs */
                         size_t d, size_t nx, size_t ny)
 {
 #pragma omp parallel for
     for (size_t j = 0; j < nx; j++) {
-        const long * __restrict idsj = ids + j * ny;
+        const  int64_t * __restrict idsj = ids + j * ny;
         const float * xj = x + j * d;
         float * __restrict disj = dis + j * ny;
         for (size_t i = 0; i < ny; i++) {
@@ -936,7 +1065,7 @@ void fvec_L2sqr_by_idx (float * __restrict dis,
    indexed by ids. May be useful for re-ranking a pre-selected vector list */
 void knn_inner_products_by_idx (const float * x,
                                 const float * y,
-                                const long * ids,
+                                const  int64_t * ids,
                                 size_t d, size_t nx, size_t ny,
                                 float_minheap_array_t * res)
 {
@@ -945,10 +1074,10 @@ void knn_inner_products_by_idx (const float * x,
 #pragma omp parallel for
     for (size_t i = 0; i < nx; i++) {
         const float * x_ = x + i * d;
-        const long * idsi = ids + i * ny;
+        const  int64_t * idsi = ids + i * ny;
         size_t j;
         float * __restrict simi = res->get_val(i);
-        long * __restrict idxi = res->get_ids (i);
+         int64_t * __restrict idxi = res->get_ids (i);
         minheap_heapify (k, simi, idxi);
 
         for (j = 0; j < ny; j++) {
@@ -967,7 +1096,7 @@ void knn_inner_products_by_idx (const float * x,
 
 void knn_L2sqr_by_idx (const float * x,
                        const float * y,
-                       const long * __restrict ids,
+                       const  int64_t * __restrict ids,
                        size_t d, size_t nx, size_t ny,
                        float_maxheap_array_t * res)
 {
@@ -976,9 +1105,9 @@ void knn_L2sqr_by_idx (const float * x,
 #pragma omp parallel for
     for (size_t i = 0; i < nx; i++) {
         const float * x_ = x + i * d;
-        const long * __restrict idsi = ids + i * ny;
+        const  int64_t * __restrict idsi = ids + i * ny;
         float * __restrict simi = res->get_val(i);
-        long * __restrict idxi = res->get_ids (i);
+         int64_t * __restrict idxi = res->get_ids (i);
         maxheap_heapify (res->k, simi, idxi);
         for (size_t j = 0; j < ny; j++) {
             float disij = fvec_L2sqr (x_, y + d * idsi[j], d);
@@ -1109,7 +1238,7 @@ static void range_search_sse (const float * x,
                 float radius,
                 RangeSearchResult *res)
 {
-    FAISS_ASSERT (d % 4 == 0);
+    FAISS_THROW_IF_NOT (d % 4 == 0);
 
 #pragma omp parallel
     {
@@ -1156,7 +1285,7 @@ void range_search_L2sqr (
         RangeSearchResult *res)
 {
 
-    if (d % 4 == 0 && nx < 20) {
+    if (d % 4 == 0 && nx < distance_compute_blas_threshold) {
         range_search_sse<true> (x, y, d, nx, ny, radius, res);
     } else {
         range_search_blas<true> (x, y, d, nx, ny, radius, res);
@@ -1171,7 +1300,7 @@ void range_search_inner_product (
         RangeSearchResult *res)
 {
 
-    if (d % 4 == 0 && nx < 20) {
+    if (d % 4 == 0 && nx < distance_compute_blas_threshold) {
         range_search_sse<false> (x, y, d, nx, ny, radius, res);
     } else {
         range_search_blas<false> (x, y, d, nx, ny, radius, res);
@@ -1205,7 +1334,7 @@ void inner_product_to_L2sqr (float * __restrict dis,
 
 void matrix_qr (int m, int n, float *a)
 {
-    FAISS_ASSERT(m >= n);
+    FAISS_THROW_IF_NOT (m >= n);
     FINTEGER mi = m, ni = n, ki = mi < ni ? mi : ni;
     std::vector<float> tau (ki);
     FINTEGER lwork = -1, info;
@@ -1225,11 +1354,11 @@ void matrix_qr (int m, int n, float *a)
 }
 
 
-void pairwise_L2sqr (long d,
-                     long nq, const float *xq,
-                     long nb, const float *xb,
+void pairwise_L2sqr ( int64_t d,
+                      int64_t nq, const float *xq,
+                      int64_t nb, const float *xb,
                      float *dis,
-                     long ldq, long ldb, long ldd)
+                      int64_t ldq,  int64_t ldb,  int64_t ldd)
 {
     if (nq == 0 || nb == 0) return;
     if (ldq == -1) ldq = d;
@@ -1240,19 +1369,19 @@ void pairwise_L2sqr (long d,
     float *b_norms = dis;
 
 #pragma omp parallel for
-    for (long i = 0; i < nb; i++)
+    for ( int64_t i = 0; i < nb; i++)
         b_norms [i] = fvec_norm_L2sqr (xb + i * ldb, d);
 
 #pragma omp parallel for
-    for (long i = 1; i < nq; i++) {
+    for ( int64_t i = 1; i < nq; i++) {
         float q_norm = fvec_norm_L2sqr (xq + i * ldq, d);
-        for (long j = 0; j < nb; j++)
+        for ( int64_t j = 0; j < nb; j++)
             dis[i * ldd + j] = q_norm + b_norms [j];
     }
 
     {
         float q_norm = fvec_norm_L2sqr (xq, d);
-        for (long j = 0; j < nb; j++)
+        for ( int64_t j = 0; j < nb; j++)
             dis[j] += q_norm;
     }
 
@@ -1282,15 +1411,17 @@ void pairwise_L2sqr (long d,
 #define EPS (1 / 1024.)
 
 /* For k-means, compute centroids given assignment of vectors to centroids */
-/* NOTE: This could be multi-threaded (use histogram of indexes) */
 int km_update_centroids (const float * x,
-                          float * centroids,
-                          long * assign,
-                          size_t d, size_t k, size_t n)
+                         float * centroids,
+                          int64_t * assign,
+                         size_t d, size_t k, size_t n,
+                         size_t k_frozen)
 {
+    k -= k_frozen;
+    centroids += k_frozen * d;
+
     std::vector<size_t> hassign(k);
     memset (centroids, 0, sizeof(*centroids) * d * k);
-
 
 #pragma omp parallel
     {
@@ -1300,12 +1431,12 @@ int km_update_centroids (const float * x,
         size_t c0 = (k * rank) / nt;
         size_t c1 = (k * (rank + 1)) / nt;
         const float *xi = x;
-        // printf("thread %d/%d: centroids %ld:%ld\n", rank, nt, c0, c1);
         size_t nacc = 0;
 
         for (size_t i = 0; i < n; i++) {
-            long ci = assign[i];
-            assert (ci >= 0 && ci < k);
+             int64_t ci = assign[i];
+            assert (ci >= 0 && ci < k + k_frozen);
+            ci -= k_frozen;
             if (ci >= c0 && ci < c1)  {
                 float * c = centroids + ci * d;
                 hassign[ci]++;
@@ -1315,7 +1446,6 @@ int km_update_centroids (const float * x,
             }
             xi += d;
         }
-        // printf("thread %d/%d: nacc = %ld/%ld\n", rank, nt, nacc, n);
 
     }
 
@@ -1335,7 +1465,7 @@ int km_update_centroids (const float * x,
     for (size_t ci = 0; ci < k; ci++) {
         if (hassign[ci] == 0) { /* need to redefine a centroid */
             size_t cj;
-            for (cj = 0; 1; cj = (cj+1) % k) {
+            for (cj = 0; 1; cj = (cj + 1) % k) {
                 /* probability to pick this cluster for split */
                 float p = (hassign[cj] - 1.0) / (float) (n - k);
                 float r = rng.rand_float ();
@@ -1346,15 +1476,15 @@ int km_update_centroids (const float * x,
             memcpy (centroids+ci*d, centroids+cj*d, sizeof(*centroids) * d);
 
             /* small symmetric pertubation. Much better than  */
-            for (size_t j = 0; j < d; j++)
+            for (size_t j = 0; j < d; j++) {
                 if (j % 2 == 0) {
                     centroids[ci * d + j] *= 1 + EPS;
                     centroids[cj * d + j] *= 1 - EPS;
+                } else {
+                    centroids[ci * d + j] *= 1 - EPS;
+                    centroids[cj * d + j] *= 1 + EPS;
                 }
-                else {
-                    centroids[ci * d + j] *= 1 + EPS;
-                    centroids[cj * d + j] *= 1 - EPS;
-                }
+            }
 
             /* assume even split of the cluster */
             hassign[ci] = hassign[cj] / 2;
@@ -1375,7 +1505,7 @@ int km_update_centroids (const float * x,
  ***************************************************************************/
 
 
-void ranklist_handle_ties (int k, long *idx, const float *dis)
+void ranklist_handle_ties (int k,  int64_t *idx, const float *dis)
 {
     float prev_dis = -1e38;
     int prev_i = -1;
@@ -1391,15 +1521,80 @@ void ranklist_handle_ties (int k, long *idx, const float *dis)
     }
 }
 
-size_t ranklist_intersection_size (size_t k1, const long *v1,
-                                   size_t k2, const long *v2_in)
+size_t merge_result_table_with (size_t n, size_t k,
+                                 int64_t *I0, float *D0,
+                                const  int64_t *I1, const float *D1,
+                                bool keep_min,
+                                 int64_t translation)
+{
+    size_t n1 = 0;
+
+#pragma omp parallel reduction(+:n1)
+    {
+        std::vector< int64_t> tmpI (k);
+        std::vector<float> tmpD (k);
+
+#pragma omp for
+        for (size_t i = 0; i < n; i++) {
+             int64_t *lI0 = I0 + i * k;
+            float *lD0 = D0 + i * k;
+            const  int64_t *lI1 = I1 + i * k;
+            const float *lD1 = D1 + i * k;
+            size_t r0 = 0;
+            size_t r1 = 0;
+
+            if (keep_min) {
+                for (size_t j = 0; j < k; j++) {
+
+                    if (lI0[r0] >= 0 && lD0[r0] < lD1[r1]) {
+                        tmpD[j] = lD0[r0];
+                        tmpI[j] = lI0[r0];
+                        r0++;
+                    } else if (lD1[r1] >= 0) {
+                        tmpD[j] = lD1[r1];
+                        tmpI[j] = lI1[r1] + translation;
+                        r1++;
+                    } else { // both are NaNs
+                        tmpD[j] = NAN;
+                        tmpI[j] = -1;
+                    }
+                }
+            } else {
+                for (size_t j = 0; j < k; j++) {
+                    if (lI0[r0] >= 0 && lD0[r0] > lD1[r1]) {
+                        tmpD[j] = lD0[r0];
+                        tmpI[j] = lI0[r0];
+                        r0++;
+                    } else if (lD1[r1] >= 0) {
+                        tmpD[j] = lD1[r1];
+                        tmpI[j] = lI1[r1] + translation;
+                        r1++;
+                    } else { // both are NaNs
+                        tmpD[j] = NAN;
+                        tmpI[j] = -1;
+                    }
+                }
+            }
+            n1 += r1;
+            memcpy (lD0, tmpD.data(), sizeof (lD0[0]) * k);
+            memcpy (lI0, tmpI.data(), sizeof (lI0[0]) * k);
+        }
+    }
+
+    return n1;
+}
+
+
+
+size_t ranklist_intersection_size (size_t k1, const  int64_t *v1,
+                                   size_t k2, const  int64_t *v2_in)
 {
     if (k2 > k1) return ranklist_intersection_size (k2, v2_in, k1, v1);
-    long *v2 = new long [k2];
-    memcpy (v2, v2_in, sizeof (long) * k2);
+     int64_t *v2 = new  int64_t [k2];
+    memcpy (v2, v2_in, sizeof ( int64_t) * k2);
     std::sort (v2, v2 + k2);
     { // de-dup v2
-        long prev = -1;
+         int64_t prev = -1;
         size_t wp = 0;
         for (size_t i = 0; i < k2; i++) {
             if (v2 [i] != prev) {
@@ -1408,14 +1603,14 @@ size_t ranklist_intersection_size (size_t k1, const long *v1,
         }
         k2 = wp;
     }
-    const long seen_flag = 1L << 60;
+    const  int64_t seen_flag = 1L << 60;
     size_t count = 0;
     for (size_t i = 0; i < k1; i++) {
-        long q = v1 [i];
+         int64_t q = v1 [i];
         size_t i0 = 0, i1 = k2;
         while (i0 + 1 < i1) {
             size_t imed = (i1 + i0) / 2;
-            long piv = v2 [imed] & ~seen_flag;
+             int64_t piv = v2 [imed] & ~seen_flag;
             if (piv <= q) i0 = imed;
             else          i1 = imed;
         }
@@ -1442,7 +1637,7 @@ double imbalance_factor (int k, const int *hist) {
 }
 
 
-double imbalance_factor (int n, int k, const long *assign) {
+double imbalance_factor (int n, int k, const  int64_t *assign) {
     std::vector<int> hist(k, 0);
     for (int i = 0; i < n; i++) {
         hist[assign[i]]++;
@@ -1466,7 +1661,7 @@ int ivec_hist (size_t n, const int * v, int vmax, int *hist) {
 
 void bincode_hist(size_t n, size_t nbits, const uint8_t *codes, int *hist)
 {
-    FAISS_ASSERT (nbits % 8 == 0);
+    FAISS_THROW_IF_NOT (nbits % 8 == 0);
     size_t d = nbits / 8;
     std::vector<int> accu(d * 256);
     const uint8_t *c = codes;
@@ -1525,7 +1720,8 @@ namespace {
         }
 
         // compute sub-ranges for each thread
-        SegmentS s1s[nt], s2s[nt], sws[nt];
+        //SegmentS s1s[nt], s2s[nt], sws[nt];
+		std::vector<SegmentS> s1s(nt), s2s(nt), sws(nt);
         s2s[0].i0 = s2.i0;
         s2s[nt - 1].i1 = s2.i1;
 
@@ -1618,7 +1814,7 @@ void fvec_argsort_parallel (size_t n, const float *vals,
 
     ArgsortComparator comp = {vals};
 
-    SegmentS segs[nt];
+    SegmentS *segs = new SegmentS[nt];
 
     // independent sorts
 #pragma omp parallel for
@@ -1659,6 +1855,7 @@ void fvec_argsort_parallel (size_t n, const float *vals,
     assert (permA == perm);
     omp_set_nested(prev_nested);
     delete [] perm2;
+	delete[] segs;
 }
 
 
@@ -1708,7 +1905,7 @@ void fvec_madd (size_t n, const float *a,
                        float bf, const float *b, float *c)
 {
     if ((n & 3) == 0 &&
-        ((((long)a) | ((long)b) | ((long)c)) & 15) == 0)
+        (((( int64_t)a) | (( int64_t)b) | (( int64_t)c)) & 15) == 0)
         fvec_madd_sse (n, a, bf, b, c);
     else
         fvec_madd_ref (n, a, bf, b, c);
@@ -1744,7 +1941,8 @@ static inline int fvec_madd_and_argmin_sse (size_t n, const float *a,
     while (n--) {
         __m128 vc4 = _mm_add_ps (*a4, _mm_mul_ps (bf4, *b4));
         *c4 = vc4;
-        __m128i mask = (__m128i)_mm_cmpgt_ps (vmin4, vc4);
+		//FIX
+        __m128i mask = _mm_castps_si128( _mm_cmpgt_ps (vmin4, vc4) );//(__m128i)
         // imin4 = _mm_blendv_epi8 (imin4, idx4, mask); // slower!
 
         imin4 = _mm_or_si128 (_mm_and_si128 (mask, idx4),
@@ -1760,7 +1958,7 @@ static inline int fvec_madd_and_argmin_sse (size_t n, const float *a,
     {
         idx4 = _mm_shuffle_epi32 (imin4, 3 << 2 | 2);
         __m128 vc4 = _mm_shuffle_ps (vmin4, vmin4, 3 << 2 | 2);
-        __m128i mask = (__m128i)_mm_cmpgt_ps (vmin4, vc4);
+        __m128i mask = _mm_castps_si128(_mm_cmpgt_ps (vmin4, vc4));//FIX
         imin4 = _mm_or_si128 (_mm_and_si128 (mask, idx4),
                               _mm_andnot_si128 (mask, imin4));
         vmin4 = _mm_min_ps (vmin4, vc4);
@@ -1769,7 +1967,7 @@ static inline int fvec_madd_and_argmin_sse (size_t n, const float *a,
     {
         idx4 = _mm_shuffle_epi32 (imin4, 1);
         __m128 vc4 = _mm_shuffle_ps (vmin4, vmin4, 1);
-        __m128i mask = (__m128i)_mm_cmpgt_ps (vmin4, vc4);
+        __m128i mask = _mm_castps_si128(_mm_cmpgt_ps (vmin4, vc4));//Fix
         imin4 = _mm_or_si128 (_mm_and_si128 (mask, idx4),
                               _mm_andnot_si128 (mask, imin4));
         // vmin4 = _mm_min_ps (vmin4, vc4);
@@ -1782,7 +1980,7 @@ int fvec_madd_and_argmin (size_t n, const float *a,
                                  float bf, const float *b, float *c)
 {
     if ((n & 3) == 0 &&
-        ((((long)a) | ((long)b) | ((long)c)) & 15) == 0)
+        (((( int64_t)a) | (( int64_t)b) | (( int64_t)c)) & 15) == 0)
         return fvec_madd_and_argmin_sse (n, a, bf, b, c);
     else
         return fvec_madd_and_argmin_ref (n, a, bf, b, c);
@@ -1792,7 +1990,7 @@ int fvec_madd_and_argmin (size_t n, const float *a,
 
 const float *fvecs_maybe_subsample (
           size_t d, size_t *n, size_t nmax, const float *x,
-          bool verbose, long seed)
+          bool verbose,  int64_t seed)
 {
 
     if (*n <= nmax) return x; // nothing to do
@@ -1805,7 +2003,7 @@ const float *fvecs_maybe_subsample (
     std::vector<int> subset (*n);
     rand_perm (subset.data (), *n, seed);
     float *x_subset = new float[n2 * d];
-    for (long i = 0; i < n2; i++)
+    for ( int64_t i = 0; i < n2; i++)
         memcpy (&x_subset[i * d],
                 &x[subset[i] * size_t(d)],
                 sizeof (x[0]) * d);

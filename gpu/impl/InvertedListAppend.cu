@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 
 #include "InvertedListAppend.cuh"
 #include "../../FaissAssert.h"
@@ -15,7 +13,7 @@
 #include "../utils/DeviceUtils.h"
 #include "../utils/Tensor.cuh"
 #include "../utils/StaticUtils.h"
-
+#include <algorithm>
 namespace faiss { namespace gpu {
 
 __global__ void
@@ -58,6 +56,8 @@ runUpdateListPointers(Tensor<int, 1, true>& listIds,
     listLengths.data().get(),
     listCodes.data().get(),
     listIndices.data().get());
+
+  CUDA_TEST_ERROR();
 }
 
 template <IndicesOptions Opt>
@@ -65,7 +65,7 @@ __global__ void
 ivfpqInvertedListAppend(Tensor<int, 1, true> listIds,
                         Tensor<int, 1, true> listOffset,
                         Tensor<int, 2, true> encodings,
-                        Tensor<long, 1, true> indices,
+                        Tensor<int64_t, 1, true> indices,
                         void** listCodes,
                         void** listIndices) {
   int encodingToAdd = blockIdx.x * blockDim.x + threadIdx.x;
@@ -83,13 +83,13 @@ ivfpqInvertedListAppend(Tensor<int, 1, true> listIds,
   }
 
   auto encoding = encodings[encodingToAdd];
-  long index = indices[encodingToAdd];
+  int64_t index = indices[encodingToAdd];
 
   if (Opt == INDICES_32_BIT) {
     // FIXME: there could be overflow here, but where should we check this?
     ((int*) listIndices[listId])[offset] = (int) index;
   } else if (Opt == INDICES_64_BIT) {
-    ((long*) listIndices[listId])[offset] = (long) index;
+    ((int64_t*) listIndices[listId])[offset] = (int64_t) index;
   } else {
     // INDICES_CPU or INDICES_IVF; no indices are being stored
   }
@@ -107,7 +107,7 @@ void
 runIVFPQInvertedListAppend(Tensor<int, 1, true>& listIds,
                            Tensor<int, 1, true>& listOffset,
                            Tensor<int, 2, true>& encodings,
-                           Tensor<long, 1, true>& indices,
+                           Tensor<int64_t, 1, true>& indices,
                            thrust::device_vector<void*>& listCodes,
                            thrust::device_vector<void*>& listIndices,
                            IndicesOptions indicesOptions,
@@ -138,6 +138,8 @@ runIVFPQInvertedListAppend(Tensor<int, 1, true>& listIds,
     FAISS_ASSERT(false);
   }
 
+  CUDA_TEST_ERROR();
+
 #undef RUN_APPEND
 }
 
@@ -146,7 +148,7 @@ __global__ void
 ivfFlatInvertedListAppend(Tensor<int, 1, true> listIds,
                           Tensor<int, 1, true> listOffset,
                           Tensor<float, 2, true> vecs,
-                          Tensor<long, 1, true> indices,
+                          Tensor<int64_t, 1, true> indices,
                           void** listData,
                           void** listIndices) {
   int vec = blockIdx.x;
@@ -160,13 +162,13 @@ ivfFlatInvertedListAppend(Tensor<int, 1, true> listIds,
   }
 
   if (threadIdx.x == 0) {
-    long index = indices[vec];
+    int64_t index = indices[vec];
 
     if (Opt == INDICES_32_BIT) {
       // FIXME: there could be overflow here, but where should we check this?
       ((int*) listIndices[listId])[offset] = (int) index;
     } else if (Opt == INDICES_64_BIT) {
-      ((long*) listIndices[listId])[offset] = (long) index;
+      ((int64_t*) listIndices[listId])[offset] = (int64_t) index;
     } else {
       // INDICES_CPU or INDICES_IVF; no indices are being stored
     }
@@ -206,7 +208,7 @@ void
 runIVFFlatInvertedListAppend(Tensor<int, 1, true>& listIds,
                              Tensor<int, 1, true>& listOffset,
                              Tensor<float, 2, true>& vecs,
-                             Tensor<long, 1, true>& indices,
+                             Tensor<int64_t, 1, true>& indices,
                              bool useFloat16,
                              thrust::device_vector<void*>& listData,
                              thrust::device_vector<void*>& listIndices,
@@ -260,6 +262,8 @@ runIVFFlatInvertedListAppend(Tensor<int, 1, true>& listIds,
       RUN_APPEND(false, false);
     }
   }
+
+  CUDA_TEST_ERROR();
 
 #undef RUN_APPEND
 #undef RUN_APPEND_OPT

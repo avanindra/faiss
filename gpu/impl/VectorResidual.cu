@@ -1,13 +1,11 @@
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  * All rights reserved.
  *
- * This source code is licensed under the CC-by-NC license found in the
+ * This source code is licensed under the BSD+Patents license found in the
  * LICENSE file in the root directory of this source tree.
  */
 
-// Copyright 2004-present Facebook. All Rights Reserved.
 #include "VectorResidual.cuh"
 #include "../../FaissAssert.h"
 #include "../utils/ConversionOperators.cuh"
@@ -15,7 +13,7 @@
 #include "../utils/Tensor.cuh"
 #include "../utils/StaticUtils.h"
 #include <math_constants.h> // in CUDA SDK, for CUDART_NAN_F
-
+#include <algorithm>
 namespace faiss { namespace gpu {
 
 template <typename CentroidT, bool LargeDim>
@@ -77,6 +75,8 @@ void calcResidual(Tensor<float, 2, true>& vecs,
     calcResidual<CentroidT, false><<<grid, block, 0, stream>>>(
       vecs, centroids, vecToCentroid, residuals);
   }
+
+  CUDA_TEST_ERROR();
 }
 
 void runCalcResidual(Tensor<float, 2, true>& vecs,
