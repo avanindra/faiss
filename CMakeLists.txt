@@ -10,8 +10,14 @@ option(WITH_MKL "Build with MKL if ON (OpenBLAS if OFF)" OFF)
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules)
 
+if(APPLE)
+    INCLUDE_DIRECTORIES(/opt/local/include
+                        /opt/local/include/libomp)
+    LINK_DIRECTORIES(/opt/local/lib)
+endif()
+
 # OpenMP
-find_package(OpenMP REQUIRED)
+find_package(OpenMP )#REQUIRED
 
 # BLAS (MKL os OpenBLAS)
 if(WITH_MKL)
@@ -24,7 +30,7 @@ else()
     set(BLAS_LIB ${OpenBLAS_LIB})
 endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fPIC -m64 -Wall -g -O3  -msse4 -mpopcnt -fopenmp -Wno-sign-compare")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fPIC -m64 -Wall -g -O3  -msse4 -mpopcnt ${OpenMP_CXX_FLAGS} -Wno-sign-compare")
 add_definitions(-DFINTEGER=int)
 
 # specify output bin_path and lib_path

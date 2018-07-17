@@ -24,7 +24,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <omp.h>
+#include <libomp/omp.h>
 
 
 #include <algorithm>
